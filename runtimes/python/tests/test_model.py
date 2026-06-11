@@ -105,6 +105,54 @@ def test_requete_sql_custom_attachee_a_la_table():
 
 
 @needs_pg
+def test_sql_parametres_nommes_types():
+    """`sql(..., nom=type)` : placeholders $nom, validation/coercion Pydantic."""
+
+    class Outil2(Table):
+        __database__ = "pytest_model"
+        __tablename__ = "vgm_gadgets"
+
+        id: Optional[int] = None
+        name: str
+        tags: dict = {}
+        active: bool = True
+        score: Optional[float] = None
+
+        entre = sql(
+            "SELECT * FROM vgm_gadgets WHERE score >= $min AND score <= $max "
+            "ORDER BY score",
+            min=float,
+            max=float,
+        )
+        comme = sql(  # $nom répété → même placeholder
+            "SELECT * FROM vgm_gadgets WHERE name = $n OR name = upper($n)", n=str
+        )
+
+    Outil2.create(name="a", score=2.0)
+    Outil2.create(name="b", score=5.0)
+    Outil2.create(name="c", score=9.0)
+
+    assert [o.name for o in Outil2.entre(min=3, max=8)] == ["b"]  # int → float coercé
+    assert [o.name for o in Outil2.entre("1", "6")] == ["a", "b"]  # strings coercées
+    assert [o.name for o in Outil2.comme(n="a")] == ["a"]
+
+    with pytest.raises(TypeError, match="manquant"):
+        Outil2.entre(min=1)
+    with pytest.raises(TypeError, match="inconnu"):
+        Outil2.entre(min=1, max=2, oops=3)
+    with pytest.raises(Exception):  # validation pydantic : pas un float
+        Outil2.entre(min="pas un nombre", max=2)
+
+
+def test_sql_declaration_incoherente_refusee():
+    """Fail fast à la déclaration : paramètre non déclaré ou jamais utilisé."""
+    with pytest.raises(TypeError, match="non déclaré"):
+        sql("SELECT * FROM x WHERE a = $a AND b = $b", a=str)  # $b manque
+    with pytest.raises(TypeError, match="absent"):
+        sql("SELECT * FROM x WHERE a = $a", a=str, b=int)  # b jamais utilisé
+
+
+@needs_pg
 def test_injection_impossible_par_nom_de_colonne():
     """La whitelist des colonnes vit dans le CORE : un nom inconnu est rejeté."""
     from vignemale import SQLError

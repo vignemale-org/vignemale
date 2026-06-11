@@ -50,25 +50,79 @@ def PII(default=_UNSET, *, purpose: str = "non précisée"):
     return Field(default=default, json_schema_extra={"pii": True, "purpose": purpose})
 
 
-def sql(query: str, raw: bool = False):
+def sql(query: str, raw: bool = False, **param_types):
     """Requête SQL custom attachée à la table (échappatoire assumée).
+
+    **Paramètres nommés et typés** (validés/coercés par Pydantic à l'appel) :
 
         class User(Table):
             ...
-            pros = sql("SELECT * FROM users WHERE plan = $1")
+            pros = sql(
+                "SELECT * FROM users WHERE plan = $plan AND age >= $age",
+                plan=str, age=int,
+            )
 
-        User.pros("pro")        # → list[User] (lignes re-typées dans le modèle)
+        User.pros(plan="pro", age=18)     # → list[User]
+        User.pros("pro", "18")            # positionnel ok ; "18" coercé en int
 
-    `raw=True` → liste de dicts (pour les jointures/agrégats qui ne
-    correspondent pas aux colonnes de la table).
+    Sans types déclarés, les placeholders positionnels `$1, $2…` restent
+    supportés : `sql("… WHERE plan = $1")` puis `User.pros("pro")`.
+
+    `raw=True` → liste de dicts (jointures/agrégats qui ne correspondent pas
+    aux colonnes de la table).
     """
+    if not param_types:
 
-    def run(cls, *params):
+        def run(cls, *params):
+            cls._ensure()
+            rows = cls._db().query(query, *params)
+            return rows if raw else [cls.model_validate(r) for r in rows]
+
+        return classmethod(run)
+
+    import re
+
+    from pydantic import TypeAdapter
+
+    order = list(param_types)
+    adapters = {name: TypeAdapter(t) for name, t in param_types.items()}
+
+    used = set(re.findall(r"\$([a-zA-Z_][a-zA-Z0-9_]*)", query))
+    unknown_in_query = used - set(order)
+    if unknown_in_query:
+        raise TypeError(
+            f"sql(): paramètre(s) non déclaré(s) dans la requête: "
+            f"{', '.join(sorted(unknown_in_query))}"
+        )
+    unused = set(order) - used
+    if unused:
+        raise TypeError(
+            f"sql(): paramètre(s) déclaré(s) mais absent(s) de la requête: "
+            f"{', '.join(sorted(unused))}"
+        )
+    # $nom → $N (les occurrences multiples partagent le même placeholder)
+    compiled = re.sub(
+        r"\$([a-zA-Z_][a-zA-Z0-9_]*)",
+        lambda m: f"${order.index(m.group(1)) + 1}",
+        query,
+    )
+
+    def run(cls, *args, **kwargs):
         cls._ensure()
-        rows = cls._db().query(query, *params)
-        if raw:
-            return rows
-        return [cls.model_validate(r) for r in rows]
+        values = dict(zip(order, args))
+        overlap = set(values) & set(kwargs)
+        if overlap:
+            raise TypeError(f"paramètre(s) en double: {', '.join(sorted(overlap))}")
+        values.update(kwargs)
+        extra = set(values) - set(order)
+        if extra:
+            raise TypeError(f"paramètre(s) inconnu(s): {', '.join(sorted(extra))}")
+        missing = [n for n in order if n not in values]
+        if missing:
+            raise TypeError(f"paramètre(s) manquant(s): {', '.join(missing)}")
+        bound = [adapters[n].validate_python(values[n]) for n in order]
+        rows = cls._db().query(compiled, *bound)
+        return rows if raw else [cls.model_validate(r) for r in rows]
 
     return classmethod(run)
 

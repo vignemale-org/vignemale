@@ -38,6 +38,11 @@ class Produit(Table):
 
     # requêtes custom attachées à la table — typées au retour
     en_stock = sql("SELECT * FROM produits WHERE stock > 0 ORDER BY name")
+    # paramètres NOMMÉS et TYPÉS : $max est déclaré float, coercé à l'appel
+    abordables = sql(
+        "SELECT * FROM produits WHERE prix <= $max AND stock > 0 ORDER BY prix",
+        max=float,
+    )
     inventaire = sql(
         "SELECT count(*) AS produits, coalesce(sum(stock), 0) AS pieces, "
         "coalesce(sum(prix * stock), 0) AS valeur FROM produits",
@@ -55,6 +60,7 @@ class Commande(Table):
     email: str = PII(purpose="contact et facturation")
     qty: int
     total: float
+
 
 
 # la commande est créée en SQL brut (transaction) : on s'assure que la table
@@ -80,7 +86,9 @@ def create_produit(body: NouveauProduit) -> Produit:
 
 
 @api(method="GET", path="/produits")
-def list_produits() -> dict:
+def list_produits(query) -> dict:
+    if "max" in query:  # ?max=100 : la string du query param est coercée en float
+        return {"produits": Produit.abordables(max=query["max"])}
     return {"produits": Produit.en_stock()}
 
 
