@@ -64,3 +64,62 @@ class SQLDatabase:
             )
         except RuntimeError as e:
             raise SQLError(str(e)) from None
+
+    def transaction(self) -> "Transaction":
+        """Transaction (context manager) : COMMIT en sortie normale,
+        ROLLBACK si une exception traverse le bloc.
+
+            with db.transaction() as tx:
+                tx.execute("UPDATE comptes SET solde = solde - $1 WHERE id = $2", 10, a)
+                tx.execute("UPDATE comptes SET solde = solde + $1 WHERE id = $2", 10, b)
+        """
+        return Transaction(self.dsn)
+
+
+class Transaction:
+    """Une transaction Postgres — mêmes méthodes que `SQLDatabase`."""
+
+    def __init__(self, dsn: str):
+        self._dsn = dsn
+        self._id = None
+
+    def __enter__(self) -> "Transaction":
+        try:
+            self._id = _core.sqldb_begin(self._dsn)
+        except RuntimeError as e:
+            raise SQLError(str(e)) from None
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        if self._id is None:
+            return
+        try:
+            if exc_type is None:
+                _core.sqldb_tx_commit(self._id)
+            else:
+                _core.sqldb_tx_rollback(self._id)
+        except RuntimeError as e:
+            if exc_type is None:  # ne pas masquer l'exception d'origine
+                raise SQLError(str(e)) from None
+        finally:
+            self._id = None
+
+    def query(self, sql: str, *params) -> list:
+        try:
+            return json.loads(
+                _core.sqldb_tx_query(self._id, sql, json.dumps(list(params), default=str))
+            )
+        except RuntimeError as e:
+            raise SQLError(str(e)) from None
+
+    def query_row(self, sql: str, *params):
+        rows = self.query(sql, *params)
+        return rows[0] if rows else None
+
+    def execute(self, sql: str, *params) -> int:
+        try:
+            return _core.sqldb_tx_execute(
+                self._id, sql, json.dumps(list(params), default=str)
+            )
+        except RuntimeError as e:
+            raise SQLError(str(e)) from None

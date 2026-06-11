@@ -1,44 +1,13 @@
-//! `sqldb` — Postgres : pool de connexions + requêtes, résultats en JSON.
-//!
-//! Version focalisée du module `sqldb` d'Encore : le binding passe des
-//! paramètres JSON, on renvoie les lignes en JSON. Le mapping fin depuis
-//! l'`infra.proto` (provider switch Managed Database / Docker local) viendra
-//! avec le provisioning ; pour l'instant le DSN arrive résolu du SDK.
+// Conversion des valeurs — miroir du val.rs d'Encore : les paramètres JSON
+// s'adaptent au type Postgres au moment du bind (coercions string → date /
+// uuid / numeric / bytea…), et les lignes reviennent en JSON typé.
 
-use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
+use rust_decimal::prelude::FromPrimitive;
+use rust_decimal::Decimal;
+use tokio_postgres::types::{IsNull, Kind, ToSql, Type};
+use tokio_postgres::Row;
 
-use deadpool_postgres::{Manager as PgManager, ManagerConfig, Pool, RecyclingMethod};
-use tokio_postgres::types::{IsNull, ToSql, Type};
-use tokio_postgres::{NoTls, Row};
-
-// Un pool par DSN, partagé pour tout le process (créé paresseusement).
-static POOLS: OnceLock<Mutex<HashMap<String, Pool>>> = OnceLock::new();
-
-/// Renvoie (en le créant au besoin) le pool de connexions pour ce DSN.
-pub fn pool_for_dsn(dsn: &str) -> anyhow::Result<Pool> {
-    let pools = POOLS.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut pools = pools.lock().expect("pools lock");
-    if let Some(p) = pools.get(dsn) {
-        return Ok(p.clone());
-    }
-    let cfg: tokio_postgres::Config = dsn
-        .parse()
-        .map_err(|e| anyhow::anyhow!("DSN invalide: {e}"))?;
-    let mgr = PgManager::from_config(
-        cfg,
-        NoTls,
-        ManagerConfig {
-            recycling_method: RecyclingMethod::Fast,
-        },
-    );
-    let pool = Pool::builder(mgr).max_size(16).build()?;
-    pools.insert(dsn.to_string(), pool.clone());
-    Ok(pool)
-}
-
-/// Paramètre SQL venu du binding (valeur JSON) ; s'adapte au type attendu
-/// par Postgres au moment du bind (INT4 vs INT8, TEXT vs UUID, etc.).
+/// Paramètre SQL venu du binding (valeur JSON).
 #[derive(Debug)]
 pub enum SqlParam {
     Null,
@@ -71,16 +40,23 @@ impl ToSql for SqlParam {
     fn to_sql(&self, ty: &Type, out: &mut bytes::BytesMut) -> ToSqlResult {
         match self {
             SqlParam::Null => Ok(IsNull::Yes),
-            SqlParam::Bool(b) => b.to_sql(ty, out),
+            SqlParam::Bool(b) => match *ty {
+                Type::TEXT | Type::VARCHAR => b.to_string().to_sql(ty, out),
+                _ => b.to_sql(ty, out),
+            },
             SqlParam::Int(i) => match *ty {
                 Type::INT2 => (*i as i16).to_sql(ty, out),
                 Type::INT4 => (*i as i32).to_sql(ty, out),
                 Type::FLOAT4 => (*i as f32).to_sql(ty, out),
                 Type::FLOAT8 => (*i as f64).to_sql(ty, out),
+                Type::NUMERIC => Decimal::from(*i).to_sql(ty, out),
                 _ => i.to_sql(ty, out),
             },
             SqlParam::Float(f) => match *ty {
                 Type::FLOAT4 => (*f as f32).to_sql(ty, out),
+                Type::NUMERIC => Decimal::from_f64(*f)
+                    .ok_or("float non représentable en NUMERIC")?
+                    .to_sql(ty, out),
                 _ => f.to_sql(ty, out),
             },
             SqlParam::Str(s) => match *ty {
@@ -88,6 +64,15 @@ impl ToSql for SqlParam {
                 Type::TIMESTAMPTZ => chrono::DateTime::parse_from_rfc3339(s)?
                     .with_timezone(&chrono::Utc)
                     .to_sql(ty, out),
+                Type::TIMESTAMP => s.parse::<chrono::NaiveDateTime>()?.to_sql(ty, out),
+                Type::DATE => {
+                    chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")?.to_sql(ty, out)
+                }
+                Type::TIME => {
+                    chrono::NaiveTime::parse_from_str(s, "%H:%M:%S")?.to_sql(ty, out)
+                }
+                Type::NUMERIC => s.parse::<Decimal>()?.to_sql(ty, out),
+                Type::BYTEA => s.as_bytes().to_sql(ty, out),
                 Type::JSON | Type::JSONB => {
                     serde_json::Value::String(s.clone()).to_sql(ty, out)
                 }
@@ -104,29 +89,13 @@ impl ToSql for SqlParam {
     tokio_postgres::types::to_sql_checked!();
 }
 
-fn params_refs(params: &[SqlParam]) -> Vec<&(dyn ToSql + Sync)> {
+pub(crate) fn params_refs(params: &[SqlParam]) -> Vec<&(dyn ToSql + Sync)> {
     params.iter().map(|p| p as &(dyn ToSql + Sync)).collect()
 }
 
-/// Exécute une requête et renvoie les lignes (tableau JSON d'objets).
-pub async fn query(
-    pool: &Pool,
-    sql: &str,
-    params: Vec<SqlParam>,
-) -> anyhow::Result<serde_json::Value> {
-    let client = pool.get().await?;
-    let rows = client.query(sql, &params_refs(&params)).await?;
-    rows_to_json(&rows)
-}
+// --- lignes → JSON typé ---
 
-/// Exécute une commande (INSERT/UPDATE/DELETE/DDL) et renvoie le nombre de
-/// lignes affectées.
-pub async fn execute(pool: &Pool, sql: &str, params: Vec<SqlParam>) -> anyhow::Result<u64> {
-    let client = pool.get().await?;
-    Ok(client.execute(sql, &params_refs(&params)).await?)
-}
-
-fn rows_to_json(rows: &[Row]) -> anyhow::Result<serde_json::Value> {
+pub(crate) fn rows_to_json(rows: &[Row]) -> anyhow::Result<serde_json::Value> {
     let mut out = Vec::with_capacity(rows.len());
     for row in rows {
         let mut obj = serde_json::Map::new();
@@ -138,11 +107,37 @@ fn rows_to_json(rows: &[Row]) -> anyhow::Result<serde_json::Value> {
     Ok(serde_json::Value::Array(out))
 }
 
+fn opt<T, F: FnOnce(T) -> serde_json::Value>(v: Option<T>, f: F) -> serde_json::Value {
+    v.map(f).unwrap_or(serde_json::Value::Null)
+}
+
+fn array_to_json(row: &Row, i: usize, inner: &Type) -> anyhow::Result<serde_json::Value> {
+    use serde_json::Value as J;
+    Ok(match *inner {
+        Type::BOOL => opt(row.try_get::<_, Option<Vec<bool>>>(i)?, J::from),
+        Type::INT2 => opt(row.try_get::<_, Option<Vec<i16>>>(i)?, J::from),
+        Type::INT4 => opt(row.try_get::<_, Option<Vec<i32>>>(i)?, J::from),
+        Type::INT8 => opt(row.try_get::<_, Option<Vec<i64>>>(i)?, J::from),
+        Type::FLOAT4 => opt(row.try_get::<_, Option<Vec<f32>>>(i)?, J::from),
+        Type::FLOAT8 => opt(row.try_get::<_, Option<Vec<f64>>>(i)?, J::from),
+        Type::TEXT | Type::VARCHAR => {
+            opt(row.try_get::<_, Option<Vec<String>>>(i)?, J::from)
+        }
+        Type::UUID => opt(row.try_get::<_, Option<Vec<uuid::Uuid>>>(i)?, |v| {
+            J::Array(v.into_iter().map(|u| J::String(u.to_string())).collect())
+        }),
+        ref other => anyhow::bail!(
+            "sqldb: tableau de type non supporté: {other} (colonne {})",
+            row.columns()[i].name()
+        ),
+    })
+}
+
 fn col_to_json(row: &Row, i: usize, ty: &Type) -> anyhow::Result<serde_json::Value> {
     use serde_json::Value as J;
 
-    fn opt<T, F: FnOnce(T) -> J>(v: Option<T>, f: F) -> J {
-        v.map(f).unwrap_or(J::Null)
+    if let Kind::Array(inner) = ty.kind() {
+        return array_to_json(row, i, inner);
     }
 
     Ok(match *ty {
@@ -168,8 +163,20 @@ fn col_to_json(row: &Row, i: usize, ty: &Type) -> anyhow::Result<serde_json::Val
         Type::DATE => opt(row.try_get::<_, Option<chrono::NaiveDate>>(i)?, |v| {
             J::String(v.to_string())
         }),
+        Type::TIME => opt(row.try_get::<_, Option<chrono::NaiveTime>>(i)?, |v| {
+            J::String(v.format("%H:%M:%S%.f").to_string())
+        }),
         Type::UUID => opt(row.try_get::<_, Option<uuid::Uuid>>(i)?, |v| {
             J::String(v.to_string())
+        }),
+        // précision préservée : NUMERIC voyage en string (façon Decimal d'Encore)
+        Type::NUMERIC => opt(row.try_get::<_, Option<Decimal>>(i)?, |v| {
+            J::String(v.to_string())
+        }),
+        // binaire : encodé base64 pour traverser le JSON
+        Type::BYTEA => opt(row.try_get::<_, Option<Vec<u8>>>(i)?, |v| {
+            use base64::Engine as _;
+            J::String(base64::engine::general_purpose::STANDARD.encode(v))
         }),
         ref other => anyhow::bail!(
             "sqldb: type de colonne non supporté: {other} (colonne {})",
@@ -208,10 +215,5 @@ mod tests {
             SqlParam::from_json(serde_json::json!({"a": 1})),
             SqlParam::Json(_)
         ));
-    }
-
-    #[test]
-    fn invalid_dsn_rejected() {
-        assert!(pool_for_dsn("pas un dsn").is_err());
     }
 }

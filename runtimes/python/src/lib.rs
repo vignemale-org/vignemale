@@ -238,6 +238,59 @@ fn sqldb_execute(
     .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:#}")))
 }
 
+// --- sqldb : transactions (begin/commit/rollback sans lifetime, façon Encore) ---
+
+/// Ouvre une transaction et renvoie son identifiant.
+#[pyfunction]
+fn sqldb_begin(py: Python<'_>, dsn: String) -> PyResult<u64> {
+    py.allow_threads(|| {
+        shared_runtime().block_on(async {
+            let pool = sqldb::pool_for_dsn(&dsn)?;
+            sqldb::tx_begin(&pool).await
+        })
+    })
+    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:#}")))
+}
+
+/// SELECT dans une transaction → lignes (JSON).
+#[pyfunction]
+fn sqldb_tx_query(
+    py: Python<'_>,
+    tx: u64,
+    sql: String,
+    params_json: String,
+) -> PyResult<String> {
+    let params = parse_sql_params(&params_json)?;
+    py.allow_threads(|| shared_runtime().block_on(sqldb::tx_query(tx, &sql, params)))
+        .map(|rows| rows.to_string())
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:#}")))
+}
+
+/// Commande dans une transaction → lignes affectées.
+#[pyfunction]
+fn sqldb_tx_execute(
+    py: Python<'_>,
+    tx: u64,
+    sql: String,
+    params_json: String,
+) -> PyResult<u64> {
+    let params = parse_sql_params(&params_json)?;
+    py.allow_threads(|| shared_runtime().block_on(sqldb::tx_execute(tx, &sql, params)))
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:#}")))
+}
+
+#[pyfunction]
+fn sqldb_tx_commit(py: Python<'_>, tx: u64) -> PyResult<()> {
+    py.allow_threads(|| shared_runtime().block_on(sqldb::tx_commit(tx)))
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:#}")))
+}
+
+#[pyfunction]
+fn sqldb_tx_rollback(py: Python<'_>, tx: u64) -> PyResult<()> {
+    py.allow_threads(|| shared_runtime().block_on(sqldb::tx_rollback(tx)))
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:#}")))
+}
+
 // --- api (serveur HTTP) : le binding implémente le trait `Handler` du core
 //     en appelant le handler Python (avec le GIL), façon `runtimes/js` d'Encore. ---
 
@@ -562,6 +615,11 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(s3_roundtrip, m)?)?;
     m.add_function(wrap_pyfunction!(sqldb_query, m)?)?;
     m.add_function(wrap_pyfunction!(sqldb_execute, m)?)?;
+    m.add_function(wrap_pyfunction!(sqldb_begin, m)?)?;
+    m.add_function(wrap_pyfunction!(sqldb_tx_query, m)?)?;
+    m.add_function(wrap_pyfunction!(sqldb_tx_execute, m)?)?;
+    m.add_function(wrap_pyfunction!(sqldb_tx_commit, m)?)?;
+    m.add_function(wrap_pyfunction!(sqldb_tx_rollback, m)?)?;
     m.add_function(wrap_pyfunction!(serve, m)?)?;
     Ok(())
 }

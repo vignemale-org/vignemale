@@ -99,3 +99,79 @@ def test_bad_dsn_is_sql_error(monkeypatch):
     monkeypatch.setenv("VIGNEMALE_SQLDB_BROKEN", "postgres://nobody@127.0.0.1:1/nope")
     with pytest.raises(SQLError):
         SQLDatabase("broken").query("SELECT 1")
+
+
+# --- transactions (portées d'Encore : COMMIT/ROLLBACK, atomicité) ---
+
+
+@needs_pg
+def test_transaction_commit(db):
+    with db.transaction() as tx:
+        tx.execute("INSERT INTO vignemale_pytest (title) VALUES ($1)", "dans la tx")
+        # visible DANS la transaction…
+        assert tx.query_row("SELECT count(*) AS n FROM vignemale_pytest")["n"] == 1
+    # …et après le COMMIT
+    assert db.query_row("SELECT title FROM vignemale_pytest")["title"] == "dans la tx"
+
+
+@needs_pg
+def test_transaction_rollback_on_exception(db):
+    with pytest.raises(ValueError):
+        with db.transaction() as tx:
+            tx.execute("INSERT INTO vignemale_pytest (title) VALUES ($1)", "fantôme")
+            raise ValueError("boum métier")
+    # l'exception a tout annulé
+    assert db.query_row("SELECT count(*) AS n FROM vignemale_pytest")["n"] == 0
+
+
+@needs_pg
+def test_transaction_isolation(db):
+    with db.transaction() as tx:
+        tx.execute("INSERT INTO vignemale_pytest (title) VALUES ($1)", "invisible")
+        # pas encore visible HORS de la transaction
+        assert db.query_row("SELECT count(*) AS n FROM vignemale_pytest")["n"] == 0
+    assert db.query_row("SELECT count(*) AS n FROM vignemale_pytest")["n"] == 1
+
+
+# --- types riches (portés du val.rs d'Encore) ---
+
+
+@needs_pg
+def test_numeric_precision_preserved(db):
+    db.execute("ALTER TABLE vignemale_pytest ADD COLUMN prix NUMERIC(12,2)")
+    db.execute(
+        "INSERT INTO vignemale_pytest (title, prix) VALUES ($1, $2)", "n", "12345678.91"
+    )
+    # NUMERIC voyage en string : pas de perte float
+    assert db.query_row("SELECT prix FROM vignemale_pytest")["prix"] == "12345678.91"
+
+
+@needs_pg
+def test_bytea_base64(db):
+    db.execute("ALTER TABLE vignemale_pytest ADD COLUMN blob BYTEA")
+    db.execute("INSERT INTO vignemale_pytest (title, blob) VALUES ($1, $2)", "b", "hello")
+    import base64
+
+    raw = db.query_row("SELECT blob FROM vignemale_pytest")["blob"]
+    assert base64.b64decode(raw) == b"hello"
+
+
+@needs_pg
+def test_arrays(db):
+    db.execute("ALTER TABLE vignemale_pytest ADD COLUMN tags TEXT[]")
+    db.execute("ALTER TABLE vignemale_pytest ADD COLUMN scores BIGINT[]")
+    db.execute(
+        "INSERT INTO vignemale_pytest (title, tags, scores) "
+        "VALUES ($1, ARRAY['a','b'], ARRAY[1,2,3])",
+        "arr",
+    )
+    row = db.query_row("SELECT tags, scores FROM vignemale_pytest")
+    assert row["tags"] == ["a", "b"]
+    assert row["scores"] == [1, 2, 3]
+
+
+@needs_pg
+def test_time_and_date(db):
+    row = db.query_row("SELECT TIME '14:30:00' AS t, DATE '2026-06-12' AS d")
+    assert row["t"].startswith("14:30:00")
+    assert row["d"] == "2026-06-12"
