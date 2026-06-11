@@ -51,7 +51,7 @@ def test_request_id_header_and_log_line(hello):
 def test_startup_log(hello):
     logs = logs_of(hello)
     (line,) = [l for l in logs if l.get("message") == "serveur démarré"]
-    assert line["endpoints"] == 7
+    assert line["endpoints"] == 10
 
 
 def test_unhandled_exception_500_with_request_id(hello):

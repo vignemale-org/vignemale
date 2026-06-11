@@ -5,10 +5,12 @@
 
 use std::convert::Infallible;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use axum::body::{Body, Bytes};
-use axum::extract::{RawPathParams, RawQuery};
+use axum::extract::rejection::BytesRejection;
+use axum::extract::{DefaultBodyLimit, RawPathParams, RawQuery};
 use axum::http::header::CONTENT_TYPE;
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::sse::{Event, Sse};
@@ -142,6 +144,29 @@ fn deny_response(resp: Response, request_id: &str) -> AxumResponse {
     r
 }
 
+fn env_u64(name: &str, default: u64) -> u64 {
+    std::env::var(name)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
+}
+
+/// Délai max de traitement effectif d'un endpoint (None = désactivé).
+fn effective_timeout(ep_timeout_ms: Option<u64>) -> Option<std::time::Duration> {
+    let ms = ep_timeout_ms.unwrap_or_else(|| env_u64("VIGNEMALE_REQUEST_TIMEOUT", 30) * 1000);
+    (ms > 0).then(|| std::time::Duration::from_millis(ms))
+}
+
+/// Valide le body extrait ; un dépassement de `body_limit` → 413 structuré.
+fn check_body(
+    body: Result<Bytes, BytesRejection>,
+) -> Result<Bytes, Response> {
+    body.map_err(|_| Response {
+        status: 413,
+        body: error_json("resource_exhausted", "corps de requête trop volumineux", None),
+    })
+}
+
 fn method_filter(method: &str) -> Option<MethodFilter> {
     match method.to_uppercase().as_str() {
         "GET" => Some(MethodFilter::GET),
@@ -231,7 +256,9 @@ fn log_request(endpoint: &str, method: &str, path: &str, status: u16, ms: u64, i
 pub fn build_router(
     endpoints: Vec<(Endpoint, HandlerKind)>,
     auth: Option<Arc<dyn AuthHandler>>,
+    shutting_down: Arc<AtomicBool>,
 ) -> anyhow::Result<Router> {
+    let default_body_limit = env_u64("VIGNEMALE_MAX_BODY", 10 * 1024 * 1024) as usize;
     let mut app = Router::new();
     for (ep, kind) in endpoints {
         let filter = method_filter(&ep.method)
@@ -241,6 +268,8 @@ pub fn build_router(
         let path: Arc<str> = Arc::from(path);
         let method: Arc<str> = Arc::from(method);
         let requires_auth = ep.requires_auth;
+        let timeout = effective_timeout(ep.timeout_ms);
+        let body_limit = ep.body_limit.map(|n| n as usize).unwrap_or(default_body_limit);
         let auth = auth.clone();
         app = match kind {
             HandlerKind::Unary(handler) => app.route(
@@ -250,7 +279,7 @@ pub fn build_router(
                     move |params: RawPathParams,
                           RawQuery(query): RawQuery,
                           headers: HeaderMap,
-                          body: Bytes| {
+                          body: Result<Bytes, BytesRejection>| {
                         let handler = handler.clone();
                         let auth = auth.clone();
                         let (name, method, path) = (name.clone(), method.clone(), path.clone());
@@ -275,6 +304,20 @@ pub fn build_router(
                             } else {
                                 None
                             };
+                            let body = match check_body(body) {
+                                Ok(b) => b,
+                                Err(denied) => {
+                                    log_request(
+                                        &name,
+                                        &method,
+                                        &path,
+                                        denied.status,
+                                        started.elapsed().as_millis() as u64,
+                                        &request_id,
+                                    );
+                                    return deny_response(denied, &request_id);
+                                }
+                            };
                             let req = make_request(
                                 params,
                                 query,
@@ -283,12 +326,30 @@ pub fn build_router(
                                 request_id.clone(),
                                 auth_data,
                             );
-                            let resp = tokio::task::spawn_blocking(move || handler.call(req))
-                                .await
-                                .unwrap_or(Response {
+                            // le handler bloquant part en arrière-plan ; au-delà
+                            // du délai on répond 504 (le handler finit, ses logs
+                            // sont conservés — façon CancellationGuard d'Encore)
+                            let work = tokio::task::spawn_blocking(move || handler.call(req));
+                            let resp = match timeout {
+                                Some(d) => match tokio::time::timeout(d, work).await {
+                                    Ok(joined) => joined.unwrap_or(Response {
+                                        status: 500,
+                                        body: error_json("internal", "handler panicked", None),
+                                    }),
+                                    Err(_) => Response {
+                                        status: 504,
+                                        body: error_json(
+                                            "deadline_exceeded",
+                                            "délai de traitement dépassé",
+                                            None,
+                                        ),
+                                    },
+                                },
+                                None => work.await.unwrap_or(Response {
                                     status: 500,
                                     body: error_json("internal", "handler panicked", None),
-                                });
+                                }),
+                            };
                             log_request(
                                 &name,
                                 &method,
@@ -308,7 +369,8 @@ pub fn build_router(
                             r
                         }
                     },
-                ),
+                )
+                .layer(DefaultBodyLimit::max(body_limit)),
             ),
             HandlerKind::Stream(handler) => app.route(
                 &route_path,
@@ -317,7 +379,7 @@ pub fn build_router(
                     move |params: RawPathParams,
                           RawQuery(query): RawQuery,
                           headers: HeaderMap,
-                          body: Bytes| {
+                          body: Result<Bytes, BytesRejection>| {
                         let handler = handler.clone();
                         let auth = auth.clone();
                         let (name, method, path) = (name.clone(), method.clone(), path.clone());
@@ -342,6 +404,20 @@ pub fn build_router(
                                 }
                             } else {
                                 None
+                            };
+                            let body = match check_body(body) {
+                                Ok(b) => b,
+                                Err(denied) => {
+                                    log_request(
+                                        &name,
+                                        &method,
+                                        &path,
+                                        denied.status,
+                                        started.elapsed().as_millis() as u64,
+                                        &request_id,
+                                    );
+                                    return deny_response(denied, &request_id);
+                                }
                             };
                             let req = make_request(
                                 params,
@@ -375,16 +451,27 @@ pub fn build_router(
                             r
                         }
                     },
-                ),
+                )
+                .layer(DefaultBodyLimit::max(body_limit)),
             ),
         };
     }
 
     // Routes internes : health check (pour les load balancers / containers).
+    // Pendant l'arrêt gracieux → 503 shutting_down (l'orchestrateur sait).
     app = app.route(
         "/__vignemale/healthz",
-        get(|| async {
-            let mut r = AxumResponse::new(Body::from(error_json("ok", "vignemale up", None)));
+        get(move || async move {
+            let (status, body) = if shutting_down.load(Ordering::SeqCst) {
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    error_json("shutting_down", "arrêt en cours", None),
+                )
+            } else {
+                (StatusCode::OK, error_json("ok", "vignemale up", None))
+            };
+            let mut r = AxumResponse::new(Body::from(body));
+            *r.status_mut() = status;
             r.headers_mut()
                 .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
             r
@@ -411,12 +498,21 @@ pub async fn serve(
     endpoints: Vec<(Endpoint, HandlerKind)>,
     addr: SocketAddr,
     auth: Option<Arc<dyn AuthHandler>>,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+    shutting_down: Arc<AtomicBool>,
 ) -> anyhow::Result<()> {
     crate::observability::init_tracing();
     let count = endpoints.len();
-    let app = build_router(endpoints, auth)?;
+    let app = build_router(endpoints, auth, shutting_down)?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!(target: "vignemale::api", addr = %addr, endpoints = count, "serveur démarré");
-    axum::serve(listener, app).await?;
+    // Arrêt gracieux : on cesse d'accepter, les requêtes en vol terminent.
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
+            let _ = shutdown.changed().await;
+            tracing::info!(target: "vignemale::api", "arrêt demandé — drain des requêtes en vol");
+        })
+        .await?;
+    tracing::info!(target: "vignemale::api", "serveur arrêté (drain terminé)");
     Ok(())
 }

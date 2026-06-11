@@ -153,7 +153,15 @@ def auth_handler(func: Callable) -> Callable:
     return func
 
 
-def api(*, method: str, path: str, stream: bool = False, auth: bool = False) -> Callable:
+def api(
+    *,
+    method: str,
+    path: str,
+    stream: bool = False,
+    auth: bool = False,
+    timeout: float = None,
+    body_limit: int = None,
+) -> Callable:
     """Déclare une fonction comme endpoint HTTP.
 
     - Si le paramètre `body` est annoté avec un modèle Pydantic, la requête est
@@ -163,6 +171,11 @@ def api(*, method: str, path: str, stream: bool = False, auth: bool = False) -> 
     - `stream=True` : le handler reçoit `stream` et pousse des fragments (SSE).
     - `auth=True` : la requête passe d'abord par le `@auth_handler` de l'app
       (sinon → 401 `unauthenticated`) ; le handler reçoit `auth` s'il le déclare.
+    - `timeout` (secondes) : au-delà → 504 `deadline_exceeded` (le handler
+      finit en arrière-plan, ses logs sont conservés). Défaut :
+      `VIGNEMALE_REQUEST_TIMEOUT` (30 s ; 0 = désactivé). Ignoré en streaming.
+    - `body_limit` (octets) : au-delà → 413 `resource_exhausted`. Défaut :
+      `VIGNEMALE_MAX_BODY` (10 Mio).
     """
 
     def decorator(func: Callable) -> Callable:
@@ -209,7 +222,9 @@ def api(*, method: str, path: str, stream: bool = False, auth: bool = False) -> 
 
         if auth:
             _auth_required.append(func.__name__)
-        _endpoints.append((func.__name__, method.upper(), path, wrapper, stream, auth))
+        _endpoints.append(
+            (func.__name__, method.upper(), path, wrapper, stream, auth, timeout, body_limit)
+        )
         return func  # on renvoie la fonction typée d'origine (pour pyright)
 
     return decorator
@@ -224,12 +239,27 @@ def _auth_adapter(token: str):
 
 
 def serve(addr: str = "127.0.0.1:8080") -> None:
-    """Démarre le serveur HTTP (bloque jusqu'à Ctrl-C)."""
+    """Démarre le serveur HTTP.
+
+    S'arrête **gracieusement** sur Ctrl-C ou SIGTERM (containers) : healthz
+    passe à 503 `shutting_down`, plus aucune connexion acceptée, les requêtes
+    en vol terminent (borné par `VIGNEMALE_SHUTDOWN_TIMEOUT`, 10 s).
+    """
     if _auth_required and _auth_handler is None:
         raise SystemExit(
             "vignemale: endpoint(s) protégé(s) sans @auth_handler déclaré : "
             + ", ".join(_auth_required)
         )
+    import signal as _signal
+
+    def _sigterm(*_args):
+        raise KeyboardInterrupt  # même chemin d'arrêt gracieux que Ctrl-C
+
+    try:
+        _signal.signal(_signal.SIGTERM, _sigterm)
+    except ValueError:
+        pass  # pas dans le thread principal (tests…) : tant pis pour SIGTERM
+
     print(f"vignemale: {len(_endpoints)} endpoint(s) sur http://{addr}", flush=True)
     try:
         _core.serve(

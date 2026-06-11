@@ -127,6 +127,16 @@ raise APIError("permission_denied", "admin requis")   # → 403
 CORS est ouvert par défaut (dev) ; `VIGNEMALE_CORS_ALLOW_ORIGINS=https://app.example.com`
 restreint. Health check : `GET /__vignemale/healthz`.
 
+**Prod-ready, sans configuration** :
+- **arrêt gracieux** sur Ctrl-C / SIGTERM : healthz passe à 503 `shutting_down`,
+  plus aucune connexion acceptée, les requêtes en vol **terminent** (borné par
+  `VIGNEMALE_SHUTDOWN_TIMEOUT`, 10 s) — redéploiement sans requête coupée ;
+- **timeout** par endpoint (`@api(timeout=5)`) ou global
+  (`VIGNEMALE_REQUEST_TIMEOUT`, 30 s) → 504 `deadline_exceeded`, le handler
+  finit en arrière-plan et ses logs sont conservés ;
+- **limite de body** par endpoint (`@api(body_limit=1024)`) ou globale
+  (`VIGNEMALE_MAX_BODY`, 10 Mio) → 413 `resource_exhausted`.
+
 **Authentification** (façon Encore — l'orchestration est dans le core Rust) :
 
 ```python

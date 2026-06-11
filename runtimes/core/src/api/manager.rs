@@ -31,9 +31,15 @@ impl Manager {
         self.auth = Some(auth);
     }
 
-    /// Démarre le serveur (boucle jusqu'à l'arrêt du process).
-    pub async fn serve(self, addr: SocketAddr) -> anyhow::Result<()> {
-        server::serve(self.endpoints, addr, self.auth).await
+    /// Démarre le serveur. S'arrête gracieusement (drain des requêtes en vol)
+    /// quand `shutdown` passe à `true` ; `shutting_down` pilote le healthz (503).
+    pub async fn serve(
+        self,
+        addr: SocketAddr,
+        shutdown: tokio::sync::watch::Receiver<bool>,
+        shutting_down: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> anyhow::Result<()> {
+        server::serve(self.endpoints, addr, self.auth, shutdown, shutting_down).await
     }
 }
 

@@ -460,12 +460,23 @@ fn call_py_stream_handler(
 }
 
 /// Démarre le serveur HTTP avec les endpoints donnés (bloque jusqu'à l'arrêt).
-/// `endpoints` = liste de (name, method, path, handler, stream, auth).
+/// `endpoints` = liste de (name, method, path, handler, stream, auth,
+/// timeout_s, body_limit).
 #[pyfunction]
 #[pyo3(signature = (endpoints, addr, auth_handler=None))]
+#[allow(clippy::type_complexity)]
 fn serve(
     py: Python<'_>,
-    endpoints: Vec<(String, String, String, Py<PyAny>, bool, bool)>,
+    endpoints: Vec<(
+        String,
+        String,
+        String,
+        Py<PyAny>,
+        bool,
+        bool,
+        Option<f64>,
+        Option<u64>,
+    )>,
     addr: String,
     auth_handler: Option<Py<PyAny>>,
 ) -> PyResult<()> {
@@ -473,7 +484,7 @@ fn serve(
         .parse()
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("adresse invalide: {e}")))?;
     let mut mgr = api::Manager::new();
-    for (name, method, path, func, stream, requires_auth) in endpoints {
+    for (name, method, path, func, stream, requires_auth, timeout_s, body_limit) in endpoints {
         let kind = if stream {
             api::HandlerKind::Stream(Arc::new(PyStreamHandler { func }))
         } else {
@@ -485,6 +496,8 @@ fn serve(
                 method,
                 path,
                 requires_auth,
+                timeout_ms: timeout_s.map(|s| (s * 1000.0) as u64),
+                body_limit,
             },
             kind,
         );
@@ -492,11 +505,16 @@ fn serve(
     if let Some(func) = auth_handler {
         mgr.set_auth_handler(Arc::new(PyAuthHandler { func }));
     }
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let shutting_down = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let sd_flag = shutting_down.clone();
     // Le serveur tourne sur un thread dédié (qui ne tient pas le GIL) ; le thread
     // principal relâche le GIL et attend, pour que les handlers puissent l'acquérir.
     let server_thread = std::thread::spawn(move || -> Result<(), String> {
         let runtime = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
-        runtime.block_on(mgr.serve(socket)).map_err(|e| e.to_string())
+        runtime
+            .block_on(mgr.serve(socket, shutdown_rx, sd_flag))
+            .map_err(|e| e.to_string())
     });
     // Attente par tranches (pas un `join` bloquant) : entre deux tranches on
     // repasse par `check_signals`, sinon Ctrl-C ne lèverait jamais
@@ -511,7 +529,24 @@ fn serve(
             return outcome.map_err(pyo3::exceptions::PyRuntimeError::new_err);
         }
         py.allow_threads(|| std::thread::sleep(std::time::Duration::from_millis(100)));
-        py.check_signals()?;
+        if let Err(signal) = py.check_signals() {
+            // Arrêt gracieux : healthz → 503, on cesse d'accepter, et on
+            // laisse les requêtes en vol finir (borné par
+            // VIGNEMALE_SHUTDOWN_TIMEOUT, défaut 10 s).
+            shutting_down.store(true, std::sync::atomic::Ordering::SeqCst);
+            let _ = shutdown_tx.send(true);
+            let drain = std::env::var("VIGNEMALE_SHUTDOWN_TIMEOUT")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(10);
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(drain);
+            py.allow_threads(|| {
+                while !server_thread.is_finished() && std::time::Instant::now() < deadline {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+            });
+            return Err(signal);
+        }
     }
 }
 

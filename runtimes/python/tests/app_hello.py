@@ -36,6 +36,27 @@ def boom():
     raise ValueError("explosion contrôlée")
 
 
+@api(method="GET", path="/slow", timeout=0.5)
+def slow():
+    import time
+
+    time.sleep(3)
+    return {"done": True}
+
+
+@api(method="GET", path="/work")
+def work():
+    import time
+
+    time.sleep(1.5)  # requête « longue » pour tester le drain
+    return {"done": True}
+
+
+@api(method="POST", path="/small", body_limit=1024)
+def small(body=None):
+    return {"ok": True}
+
+
 @api(method="GET", path="/stream", stream=True)
 def stream_demo(stream):
     # Simule un agent qui streame ses tokens (un vrai modèle ferait pareil).

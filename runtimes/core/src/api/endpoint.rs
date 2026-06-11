@@ -10,4 +10,10 @@ pub struct Endpoint {
     /// L'accès exige l'authentification (le serveur passe par l'`AuthHandler`
     /// AVANT d'appeler le handler — et avant d'ouvrir le flux pour un stream).
     pub requires_auth: bool,
+    /// Délai max de traitement (ms) ; `None` → défaut global
+    /// (`VIGNEMALE_REQUEST_TIMEOUT`, 30 s ; 0 = désactivé). Ignoré en streaming.
+    pub timeout_ms: Option<u64>,
+    /// Taille max du body (octets) ; `None` → défaut global
+    /// (`VIGNEMALE_MAX_BODY`, 10 Mio).
+    pub body_limit: Option<u64>,
 }
