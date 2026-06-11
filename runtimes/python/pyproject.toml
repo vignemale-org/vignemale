@@ -14,7 +14,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "pydantic-ai-slim[anthropic]>=1.0"]
 
 [project.scripts]
 vignemale = "vignemale.cli:main"

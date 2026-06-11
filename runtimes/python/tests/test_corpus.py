@@ -43,6 +43,7 @@ def app():
     addr = f"127.0.0.1:{free_port()}"
     env = {k: v for k, v in os.environ.items() if not k.startswith("VIGNEMALE_SQLDB")}
     env["VIGNEMALE_SQLDB"] = PG or ""
+    env["VIGNEMALE_RAG_MODEL"] = "test"  # TestModel pydantic-ai (CI hors-ligne)
     srv = Server(
         [sys.executable, "-m", "vignemale.cli", "run",
          os.path.join(EXAMPLES, "corpus"), "--addr", addr],
@@ -125,3 +126,50 @@ def test_rag_avec_permissions_de_bout_en_bout(app):
                  {"query": "combien coûte le BTS en alternance ?"})
     reponse = " ".join(chunks)
     assert "7900" in reponse and "tarifs.txt" in reponse
+
+
+@needs_pg
+def test_conversations_persistees_agent_pydantic_ai(app):
+    """L'agent Pydantic AI : conversations en base, mémoire de l'agent
+    sérialisée/rechargée à chaque tour, sources persistées, isolation."""
+    suffixe = uuid.uuid4().hex[:8]
+    _, fred = req(app, "/signup",
+                  {"email": f"fred-{suffixe}@omnes.fr", "name": "Fred"})
+    token = fred["token"]
+
+    # une KB avec un document, pour que le RAG ait des sources
+    _, base = req(app, "/kbs", {"name": f"rh-{suffixe}"}, token=token)
+    doc = "Politique de télétravail.\n\n3 jours par semaine, accord du manager requis."
+    req(app, f"/kbs/{base['id']}/documents",
+        {"filename": "teletravail.txt", "content_b64": b64(doc)}, token=token)
+
+    s, conv = req(app, "/conversations", {"title": "Questions RH"}, token=token)
+    assert s == 200
+
+    # deux tours streamés — le 2e recharge la mémoire de l'agent depuis la base
+    for question in ("combien de jours de télétravail ?", "et qui valide ?"):
+        chunks = sse(app, f"/conversations/{conv['id']}/ask?token={token}",
+                     {"query": question})
+        assert chunks, "la réponse doit être streamée"
+
+    # persistance : 2×(user+assistant), sources attachées aux réponses
+    s, full = req(app, f"/conversations/{conv['id']}", token=token)
+    assert [m["role"] for m in full["messages"]] == [
+        "user", "assistant", "user", "assistant"
+    ]
+    assert full["messages"][0]["content"] == "combien de jours de télétravail ?"
+    assert all(m["content"] for m in full["messages"])
+    sources = full["messages"][1]["sources"]
+    assert sources and sources[0]["filename"] == "teletravail.txt"
+
+    # la liste montre la conversation et son compte de messages
+    _, liste = req(app, "/conversations", token=token)
+    assert {"id": conv["id"], "title": "Questions RH", "messages": 4} in liste[
+        "conversations"
+    ]
+
+    # isolation : un autre utilisateur → 403
+    _, autre = req(app, "/signup",
+                   {"email": f"gus-{suffixe}@omnes.fr", "name": "Gus"})
+    s, body = req(app, f"/conversations/{conv['id']}", token=autre["token"])
+    assert (s, body["code"]) == (403, "permission_denied")

@@ -52,6 +52,7 @@ pub trait Handler: Send + Sync + 'static {
 /// Puits d'écriture d'un handler streaming : chaque `write` devient un événement
 /// SSE `data:`. À appeler hors contexte async (le handler tourne sur un thread
 /// bloquant).
+#[derive(Clone)]
 pub struct StreamSink {
     tx: tokio::sync::mpsc::Sender<String>,
 }

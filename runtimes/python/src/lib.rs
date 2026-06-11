@@ -552,14 +552,27 @@ fn call_py_handler(py: Python<'_>, func: &Py<PyAny>, req: api::Request) -> PyRes
 
 #[pyclass]
 struct PyStreamSink {
-    sink: api::StreamSink,
+    // Option : le binding ferme le flux explicitement quand le handler
+    // retourne — la fin du stream ne dépend pas du GC Python (un cycle de
+    // références côté app retiendrait le canal ouvert indéfiniment).
+    sink: std::sync::Mutex<Option<api::StreamSink>>,
 }
 
 #[pymethods]
 impl PyStreamSink {
-    /// Pousse un fragment dans le flux SSE.
+    /// Pousse un fragment dans le flux SSE. `false` si le flux est fermé.
     fn write(&self, py: Python<'_>, chunk: String) -> bool {
-        py.allow_threads(|| self.sink.write(chunk))
+        let sink = self.sink.lock().expect("sink lock").clone();
+        match sink {
+            Some(s) => py.allow_threads(move || s.write(chunk)),
+            None => false,
+        }
+    }
+}
+
+impl PyStreamSink {
+    fn close(&self) {
+        self.sink.lock().expect("sink lock").take();
     }
 }
 
@@ -590,9 +603,14 @@ fn call_py_stream_handler(
     sink: api::StreamSink,
 ) -> PyResult<()> {
     let kwargs = build_kwargs(py, &req)?;
-    let py_sink = Py::new(py, PyStreamSink { sink })?;
-    kwargs.set_item("stream", py_sink)?;
-    func.bind(py).call((), Some(&kwargs))?;
+    let py_sink = Py::new(py, PyStreamSink {
+        sink: std::sync::Mutex::new(Some(sink)),
+    })?;
+    kwargs.set_item("stream", py_sink.clone_ref(py))?;
+    let result = func.bind(py).call((), Some(&kwargs));
+    // handler terminé (succès ou non) → on ferme le flux SSE explicitement
+    py_sink.borrow(py).close();
+    result?;
     Ok(())
 }
 
