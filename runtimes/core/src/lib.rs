@@ -4,15 +4,18 @@
 //! portés depuis Encore (`runtimes/core`, MPL — cf. `proto/ATTRIBUTION.md`), rebrandés.
 //!
 //! Modules portés : config · proccfg · runtime_config · names · secrets · objects ·
-//! api (serveur HTTP focalisé). À venir : sqldb · queue.
+//! api (serveur HTTP focalisé) · sqldb (Postgres) · observability (logs JSON).
+//! À venir : queue.
 
 pub mod api;
 pub mod config;
 pub mod names;
 pub mod objects;
+pub mod observability;
 pub mod proccfg;
 pub mod runtime_config;
 pub mod secrets;
+pub mod sqldb;
 
 pub mod vignemale {
     pub mod runtime {

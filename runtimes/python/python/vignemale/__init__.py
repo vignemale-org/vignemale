@@ -14,8 +14,10 @@ from vignemale._core import (
     resolve_json_key_secret,
     s3_roundtrip,
 )
+from vignemale import log
 from vignemale.api import api, serve, HTTPError
 from vignemale.service import Service
+from vignemale.sqldb import SQLDatabase, SQLError
 
 __all__ = [
     "version",
@@ -30,4 +32,7 @@ __all__ = [
     "serve",
     "HTTPError",
     "Service",
+    "SQLDatabase",
+    "SQLError",
+    "log",
 ]

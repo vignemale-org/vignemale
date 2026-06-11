@@ -21,6 +21,11 @@ def echo(body):
     return {"you_sent": body}
 
 
+@api(method="GET", path="/boom")
+def boom():
+    raise ValueError("explosion contrôlée")
+
+
 @api(method="GET", path="/stream", stream=True)
 def stream_demo(stream):
     # Simule un agent qui streame ses tokens (un vrai modèle ferait pareil).

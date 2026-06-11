@@ -12,7 +12,14 @@ use vignemale_runtime_core::api;
 use vignemale_runtime_core::config;
 use vignemale_runtime_core::objects;
 use vignemale_runtime_core::secrets;
+use vignemale_runtime_core::sqldb;
 use vignemale_runtime_core::vignemale::runtime::v1 as rt;
+
+/// Runtime tokio partagé du binding (sqldb & co) — créé paresseusement.
+fn shared_runtime() -> &'static tokio::runtime::Runtime {
+    static RT: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+    RT.get_or_init(|| tokio::runtime::Runtime::new().expect("tokio runtime"))
+}
 
 /// Version de la crate binding.
 #[pyfunction]
@@ -191,8 +198,64 @@ fn s3_roundtrip(
     Ok(PyBytes::new_bound(py, &result).unbind())
 }
 
+// --- sqldb (Postgres) : requêtes via le pool du core, params/lignes en JSON ---
+
+fn parse_sql_params(params_json: &str) -> PyResult<Vec<sqldb::SqlParam>> {
+    let values: Vec<serde_json::Value> = serde_json::from_str(params_json)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("params invalides: {e}")))?;
+    Ok(values.into_iter().map(sqldb::SqlParam::from_json).collect())
+}
+
+/// Exécute une requête SELECT et renvoie les lignes (JSON : tableau d'objets).
+#[pyfunction]
+fn sqldb_query(py: Python<'_>, dsn: String, sql: String, params_json: String) -> PyResult<String> {
+    let params = parse_sql_params(&params_json)?;
+    py.allow_threads(|| {
+        shared_runtime().block_on(async {
+            let pool = sqldb::pool_for_dsn(&dsn)?;
+            sqldb::query(&pool, &sql, params).await
+        })
+    })
+    .map(|rows| rows.to_string())
+    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:#}")))
+}
+
+/// Exécute une commande (INSERT/UPDATE/DELETE/DDL), renvoie les lignes affectées.
+#[pyfunction]
+fn sqldb_execute(
+    py: Python<'_>,
+    dsn: String,
+    sql: String,
+    params_json: String,
+) -> PyResult<u64> {
+    let params = parse_sql_params(&params_json)?;
+    py.allow_threads(|| {
+        shared_runtime().block_on(async {
+            let pool = sqldb::pool_for_dsn(&dsn)?;
+            sqldb::execute(&pool, &sql, params).await
+        })
+    })
+    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:#}")))
+}
+
 // --- api (serveur HTTP) : le binding implémente le trait `Handler` du core
 //     en appelant le handler Python (avec le GIL), façon `runtimes/js` d'Encore. ---
+
+/// Formate l'exception Python (traceback complet) pour les logs structurés.
+fn format_py_err(py: Python<'_>, e: &PyErr) -> String {
+    let fallback = || e.to_string();
+    let Ok(tb_mod) = py.import_bound("traceback") else {
+        return fallback();
+    };
+    tb_mod
+        .call_method1(
+            "format_exception",
+            (e.get_type_bound(py), e.value_bound(py), e.traceback_bound(py)),
+        )
+        .and_then(|lines| lines.extract::<Vec<String>>())
+        .map(|lines| lines.join(""))
+        .unwrap_or_else(|_| fallback())
+}
 
 struct PyHandler {
     func: Py<PyAny>,
@@ -200,13 +263,22 @@ struct PyHandler {
 
 impl api::Handler for PyHandler {
     fn call(&self, req: api::Request) -> api::Response {
+        let request_id = req.request_id.clone();
         Python::with_gil(|py| match call_py_handler(py, &self.func, req) {
             Ok(body) => api::Response { status: 200, body },
             Err(e) => http_error_response(py, &e).unwrap_or_else(|| {
-                e.print(py);
+                tracing::error!(
+                    target: "vignemale::app",
+                    request_id = %request_id,
+                    traceback = %format_py_err(py, &e),
+                    "exception non gérée dans le handler"
+                );
                 api::Response {
                     status: 500,
-                    body: br#"{"error":"handler error"}"#.to_vec(),
+                    body: format!(
+                        r#"{{"error":"internal error","request_id":"{request_id}"}}"#
+                    )
+                    .into_bytes(),
                 }
             }),
         })
@@ -265,9 +337,15 @@ struct PyStreamHandler {
 
 impl api::StreamHandler for PyStreamHandler {
     fn call(&self, req: api::Request, sink: api::StreamSink) {
+        let request_id = req.request_id.clone();
         Python::with_gil(|py| {
             if let Err(e) = call_py_stream_handler(py, &self.func, req, sink) {
-                e.print(py);
+                tracing::error!(
+                    target: "vignemale::app",
+                    request_id = %request_id,
+                    traceback = %format_py_err(py, &e),
+                    "exception non gérée dans le handler streaming"
+                );
             }
         });
     }
@@ -348,6 +426,8 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(resolve_b64_secret, m)?)?;
     m.add_function(wrap_pyfunction!(resolve_json_key_secret, m)?)?;
     m.add_function(wrap_pyfunction!(s3_roundtrip, m)?)?;
+    m.add_function(wrap_pyfunction!(sqldb_query, m)?)?;
+    m.add_function(wrap_pyfunction!(sqldb_execute, m)?)?;
     m.add_function(wrap_pyfunction!(serve, m)?)?;
     Ok(())
 }
