@@ -23,6 +23,9 @@ from . import _core
 CONTAINER = "vignemale-postgres"
 VOLUME = "vignemale-pg-data"
 PORT = 5498
+# pgvector inclus (RAG/embeddings) — même Postgres 16, extension en plus,
+# comme les Managed Database Scaleway.
+IMAGE = "pgvector/pgvector:pg16"
 _PASSWORD = "vignemale"  # dev local uniquement
 ADMIN_DSN = f"postgres://postgres:{_PASSWORD}@127.0.0.1:{PORT}/postgres"
 
@@ -77,7 +80,7 @@ def _ensure_postgres() -> None:
             "-p", f"{PORT}:5432",
             "-e", f"POSTGRES_PASSWORD={_PASSWORD}",
             "-v", f"{VOLUME}:/var/lib/postgresql/data",
-            "postgres:16",
+            IMAGE,
         )
         if r.returncode != 0:
             raise SystemExit(

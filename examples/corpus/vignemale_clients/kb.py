@@ -1,0 +1,39 @@
+"""Client typé du service « kb » — GÉNÉRÉ par `vignemale gen`, ne pas éditer."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+from vignemale import call
+from vignemale._genutil import validate_model
+
+if TYPE_CHECKING:
+    from kb.bases import Grant
+    from kb.documents import NewDocument
+    from kb.bases import NewKb
+    from kb.documents import VectorQuery
+
+
+def upload_document(*, id: Any, body: NewDocument | dict) -> dict:
+    """POST /kbs/:id/documents"""
+    return call("kb", "upload_document", id=id, body=body)
+
+
+def vector_search(*, body: VectorQuery | dict) -> dict:
+    """POST /vector-search"""
+    return call("kb", "vector_search", body=body)
+
+
+def create_kb(*, body: NewKb | dict) -> dict:
+    """POST /kbs"""
+    return call("kb", "create_kb", body=body)
+
+
+def grant_kb(*, id: Any, body: Grant | dict) -> dict:
+    """POST /kbs/:id/grant"""
+    return call("kb", "grant_kb", id=id, body=body)
+
+
+def list_kbs() -> dict:
+    """GET /kbs"""
+    return call("kb", "list_kbs")
