@@ -20,6 +20,7 @@ Les erreurs suivent le contrat Encore : corps `{code, message, details}`, codes
 gRPC-style mappés sur les statuts HTTP (cf. `APIError`).
 """
 
+import contextvars
 import functools
 import inspect
 import json
@@ -29,6 +30,12 @@ from . import _core
 
 # Registre des endpoints déclarés (rempli par le décorateur à l'import de l'app).
 _endpoints: list = []
+
+# Contexte de la requête en cours (posé par le wrapper, lu par `call()` pour
+# propager trace et auth aux appels service-à-service).
+_request_ctx: contextvars.ContextVar = contextvars.ContextVar(
+    "vignemale_request_ctx", default=None
+)
 
 # Codes d'erreur (façon Encore / gRPC) → statut HTTP.
 _CODE_TO_STATUS = {
@@ -197,6 +204,12 @@ def api(
 
         @functools.wraps(func)
         def wrapper(**kwargs):
+            # contexte de requête (trace + auth), AVANT le filtrage — `call()`
+            # s'en sert pour propager aux appels service-à-service
+            ctx = {
+                "traceparent": (kwargs.get("headers") or {}).get("traceparent"),
+                "auth": kwargs.get("auth"),
+            }
             # le runtime fournit tout (params, query, headers, body, auth) ;
             # on ne transmet que ce que la signature du handler déclare.
             # L'authentification elle-même est jouée par le CORE, avant l'appel.
@@ -215,7 +228,11 @@ def api(
                         "requête invalide",
                         details=json.loads(e.json()),
                     ) from None
-            result = func(**kwargs)
+            ctx_token = _request_ctx.set(ctx)
+            try:
+                result = func(**kwargs)
+            finally:
+                _request_ctx.reset(ctx_token)
             if _pydantic_model(type(result)) is not None:
                 result = result.model_dump()
             return result

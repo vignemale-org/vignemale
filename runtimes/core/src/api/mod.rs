@@ -13,6 +13,7 @@ mod endpoint;
 mod error;
 mod manager;
 mod server;
+pub mod svcauth;
 
 pub use endpoint::Endpoint;
 pub use error::error_json;

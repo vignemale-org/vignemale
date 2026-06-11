@@ -32,6 +32,10 @@ uuid = { version = "1", features = ["v4"] }
 # Observabilité — logs structurés JSON + spans (fondation OTel à venir).
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+# svcauth — signature HMAC des appels service-à-service (façon EncoreAuth).
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
 
 [build-dependencies]
 prost-build = "0.12"

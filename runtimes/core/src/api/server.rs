@@ -180,6 +180,20 @@ fn method_filter(method: &str) -> Option<MethodFilter> {
     }
 }
 
+/// Contexte de trace W3C : reprend le `traceparent` entrant s'il est valide,
+/// sinon en crée un. Renvoie (trace_id, traceparent).
+fn trace_context(headers: &HeaderMap) -> (String, String) {
+    if let Some(tp) = headers.get("traceparent").and_then(|v| v.to_str().ok()) {
+        let parts: Vec<&str> = tp.split('-').collect();
+        if parts.len() >= 4 && parts[1].len() == 32 {
+            return (parts[1].to_string(), tp.to_string());
+        }
+    }
+    let trace_id = uuid::Uuid::new_v4().simple().to_string(); // 32 hex
+    let span_id = uuid::Uuid::new_v4().simple().to_string()[..16].to_string();
+    (trace_id.clone(), format!("00-{trace_id}-{span_id}-01"))
+}
+
 fn make_request(
     params: RawPathParams,
     query: Option<String>,
@@ -187,7 +201,19 @@ fn make_request(
     body: Bytes,
     request_id: String,
     auth_data: Option<String>,
+    traceparent: &str,
 ) -> Request {
+    let mut hdrs: Vec<(String, String)> = headers
+        .iter()
+        .filter_map(|(k, v)| {
+            v.to_str()
+                .ok()
+                .map(|v| (k.as_str().to_lowercase(), v.to_string()))
+        })
+        .filter(|(k, _)| k != "traceparent")
+        .collect();
+    // toujours présent (repris ou généré) → l'app peut le propager via call()
+    hdrs.push(("traceparent".to_string(), traceparent.to_string()));
     Request {
         params: params
             .iter()
@@ -196,14 +222,7 @@ fn make_request(
         query: form_urlencoded::parse(query.unwrap_or_default().as_bytes())
             .map(|(k, v)| (k.into_owned(), v.into_owned()))
             .collect(),
-        headers: headers
-            .iter()
-            .filter_map(|(k, v)| {
-                v.to_str()
-                    .ok()
-                    .map(|v| (k.as_str().to_lowercase(), v.to_string()))
-            })
-            .collect(),
+        headers: hdrs,
         body: body.to_vec(),
         request_id,
         auth_data,
@@ -237,17 +256,28 @@ fn set_request_id_header(r: &mut AxumResponse, request_id: &str) {
     }
 }
 
-fn log_request(endpoint: &str, method: &str, path: &str, status: u16, ms: u64, id: &str) {
+#[allow(clippy::too_many_arguments)]
+fn log_request(
+    endpoint: &str,
+    method: &str,
+    path: &str,
+    status: u16,
+    ms: u64,
+    id: &str,
+    trace_id: &str,
+) {
     if status >= 500 {
         tracing::error!(
             target: "vignemale::api",
             endpoint, method, path, status, duration_ms = ms, request_id = id,
+            trace_id,
             "requête en erreur"
         );
     } else {
         tracing::info!(
             target: "vignemale::api",
             endpoint, method, path, status, duration_ms = ms, request_id = id,
+            trace_id,
             "requête traitée"
         );
     }
@@ -259,6 +289,16 @@ pub fn build_router(
     shutting_down: Arc<AtomicBool>,
 ) -> anyhow::Result<Router> {
     let default_body_limit = env_u64("VIGNEMALE_MAX_BODY", 10 * 1024 * 1024) as usize;
+
+    // Index des endpoints unaires pour les appels service-à-service signés.
+    let mut internal: std::collections::HashMap<String, (Arc<dyn Handler>, bool)> =
+        std::collections::HashMap::new();
+    for (ep, kind) in &endpoints {
+        if let HandlerKind::Unary(h) = kind {
+            internal.insert(ep.name.clone(), (h.clone(), ep.requires_auth));
+        }
+    }
+
     let mut app = Router::new();
     for (ep, kind) in endpoints {
         let filter = method_filter(&ep.method)
@@ -286,6 +326,7 @@ pub fn build_router(
                         async move {
                             let request_id = crate::observability::request_id();
                             let started = std::time::Instant::now();
+                            let (trace_id, traceparent) = trace_context(&headers);
                             let auth_data = if requires_auth {
                                 match run_auth(&auth, &headers, &query).await {
                                     Ok(data) => data,
@@ -297,6 +338,7 @@ pub fn build_router(
                                             denied.status,
                                             started.elapsed().as_millis() as u64,
                                             &request_id,
+                                            &trace_id,
                                         );
                                         return deny_response(denied, &request_id);
                                     }
@@ -314,6 +356,7 @@ pub fn build_router(
                                         denied.status,
                                         started.elapsed().as_millis() as u64,
                                         &request_id,
+                                        &trace_id,
                                     );
                                     return deny_response(denied, &request_id);
                                 }
@@ -325,6 +368,7 @@ pub fn build_router(
                                 body,
                                 request_id.clone(),
                                 auth_data,
+                                &traceparent,
                             );
                             // le handler bloquant part en arrière-plan ; au-delà
                             // du délai on répond 504 (le handler finit, ses logs
@@ -357,6 +401,7 @@ pub fn build_router(
                                 resp.status,
                                 started.elapsed().as_millis() as u64,
                                 &request_id,
+                                &trace_id,
                             );
                             let mut r = AxumResponse::new(Body::from(resp.body));
                             *r.status_mut() = StatusCode::from_u16(resp.status)
@@ -386,6 +431,7 @@ pub fn build_router(
                         async move {
                             let request_id = crate::observability::request_id();
                             let started = std::time::Instant::now();
+                            let (trace_id, traceparent) = trace_context(&headers);
                             // l'auth se joue AVANT d'ouvrir le flux → vrai 401
                             let auth_data = if requires_auth {
                                 match run_auth(&auth, &headers, &query).await {
@@ -398,6 +444,7 @@ pub fn build_router(
                                             denied.status,
                                             started.elapsed().as_millis() as u64,
                                             &request_id,
+                                            &trace_id,
                                         );
                                         return deny_response(denied, &request_id);
                                     }
@@ -415,6 +462,7 @@ pub fn build_router(
                                         denied.status,
                                         started.elapsed().as_millis() as u64,
                                         &request_id,
+                                        &trace_id,
                                     );
                                     return deny_response(denied, &request_id);
                                 }
@@ -426,12 +474,14 @@ pub fn build_router(
                                 body,
                                 request_id.clone(),
                                 auth_data,
+                                &traceparent,
                             );
                             let (tx, rx) = tokio::sync::mpsc::channel::<String>(64);
                             let sink = StreamSink { tx };
                             // Le handler (bloquant) pousse des fragments via `sink` ;
                             // on logge à la fin du flux (durée = vie du handler).
                             let log_id = request_id.clone();
+                            let log_trace = trace_id.clone();
                             tokio::task::spawn_blocking(move || {
                                 handler.call(req, sink);
                                 log_request(
@@ -441,6 +491,7 @@ pub fn build_router(
                                     200,
                                     started.elapsed().as_millis() as u64,
                                     &log_id,
+                                    &log_trace,
                                 );
                             });
                             let stream = ReceiverStream::new(rx).map(|chunk| {
@@ -455,6 +506,146 @@ pub fn build_router(
                 .layer(DefaultBodyLimit::max(body_limit)),
             ),
         };
+    }
+
+    // Appels service-à-service : route interne signée (HMAC, secret partagé
+    // VIGNEMALE_SERVICE_SECRET). Le payload est {"params": {...}, "body": …} ;
+    // les données d'auth de l'appelant arrivent propagées dans
+    // `x-vignemale-auth-data`, le contexte de trace dans `traceparent`.
+    {
+        let internal = Arc::new(internal);
+        app = app.route(
+            "/__vignemale/call/:endpoint",
+            axum::routing::post(
+                move |axum::extract::Path(endpoint): axum::extract::Path<String>,
+                      headers: HeaderMap,
+                      body: Bytes| {
+                    let internal = internal.clone();
+                    async move {
+                        let request_id = crate::observability::request_id();
+                        let started = std::time::Instant::now();
+                        let (trace_id, traceparent) = trace_context(&headers);
+                        let hdr = |name: &str| -> String {
+                            headers
+                                .get(name)
+                                .and_then(|v| v.to_str().ok())
+                                .unwrap_or_default()
+                                .to_string()
+                        };
+                        let caller = hdr("x-vignemale-caller");
+                        let mut finish = |resp: Response| {
+                            tracing::info!(
+                                target: "vignemale::api",
+                                endpoint = %endpoint, caller = %caller,
+                                status = resp.status,
+                                duration_ms = started.elapsed().as_millis() as u64,
+                                request_id = %request_id, trace_id = %trace_id,
+                                "appel interne traité"
+                            );
+                            deny_response(resp, &request_id)
+                        };
+
+                        // 1) signature obligatoire
+                        let Ok(secret) = std::env::var("VIGNEMALE_SERVICE_SECRET") else {
+                            return finish(Response {
+                                status: 401,
+                                body: error_json(
+                                    "unauthenticated",
+                                    "appels inter-services non configurés (VIGNEMALE_SERVICE_SECRET)",
+                                    None,
+                                ),
+                            });
+                        };
+                        if let Err(reason) = super::svcauth::verify(
+                            &secret,
+                            &hdr("x-vignemale-date"),
+                            &caller,
+                            &endpoint,
+                            &body,
+                            &hdr("x-vignemale-signature"),
+                            super::svcauth::now_epoch(),
+                        ) {
+                            return finish(Response {
+                                status: 401,
+                                body: error_json("unauthenticated", reason, None),
+                            });
+                        }
+
+                        // 2) endpoint cible
+                        let Some((handler, requires_auth)) = internal.get(&endpoint).cloned()
+                        else {
+                            return finish(Response {
+                                status: 404,
+                                body: error_json("not_found", "endpoint interne inconnu", None),
+                            });
+                        };
+
+                        // 3) payload {"params": {...}, "body": …}
+                        let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&body)
+                        else {
+                            return finish(Response {
+                                status: 400,
+                                body: error_json("invalid_argument", "payload invalide", None),
+                            });
+                        };
+                        let params: Vec<(String, String)> = payload
+                            .get("params")
+                            .and_then(|p| p.as_object())
+                            .map(|o| {
+                                o.iter()
+                                    .map(|(k, v)| {
+                                        let s = v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string());
+                                        (k.clone(), s)
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        let inner_body = match payload.get("body") {
+                            None | Some(serde_json::Value::Null) => Vec::new(),
+                            Some(v) => serde_json::to_vec(v).unwrap_or_default(),
+                        };
+
+                        // 4) auth propagée (les appels internes sont de confiance :
+                        //    pas de re-passage par l'auth handler, façon Encore)
+                        let auth_header = hdr("x-vignemale-auth-data");
+                        let auth_data = if requires_auth {
+                            if auth_header.is_empty() {
+                                return finish(Response {
+                                    status: 401,
+                                    body: error_json(
+                                        "unauthenticated",
+                                        "endpoint protégé : données d'auth non propagées",
+                                        None,
+                                    ),
+                                });
+                            }
+                            Some(auth_header)
+                        } else {
+                            None
+                        };
+
+                        let req = Request {
+                            params,
+                            query: vec![],
+                            headers: vec![
+                                ("traceparent".to_string(), traceparent.clone()),
+                                ("x-vignemale-caller".to_string(), caller.clone()),
+                            ],
+                            body: inner_body,
+                            request_id: request_id.clone(),
+                            auth_data,
+                        };
+                        let resp = tokio::task::spawn_blocking(move || handler.call(req))
+                            .await
+                            .unwrap_or(Response {
+                                status: 500,
+                                body: error_json("internal", "handler panicked", None),
+                            });
+                        finish(resp)
+                    }
+                },
+            ),
+        );
     }
 
     // Routes internes : health check (pour les load balancers / containers).
