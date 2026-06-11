@@ -42,7 +42,11 @@ def _load_app(path: str) -> None:
             full = os.path.join(path, f)
             if f.endswith(".py") and not f.startswith("_"):
                 _load_file(full)
-            elif not f.startswith(("_", ".")) and _is_service_dir(full):
+            elif (
+                not f.startswith(("_", "."))
+                and f != "vignemale_clients"  # clients générés ≠ service
+                and _is_service_dir(full)
+            ):
                 _load_package(f, full)
     elif os.path.isfile(path):
         sys.path.insert(0, os.path.dirname(path))
@@ -71,6 +75,13 @@ def cmd_run(args):
     from vignemale.api import serve
 
     serve(args.addr)
+
+
+def cmd_gen(args):
+    from vignemale.gen import generate
+
+    for f in generate(args.path):
+        print(f"vignemale: écrit {f}")
 
 
 def cmd_rgpd(args):
@@ -162,6 +173,12 @@ def main(argv=None):
         help="valide les requêtes sql() par PREPARE Postgres (sans les exécuter)",
     )
     p_check.set_defaults(func=cmd_check)
+
+    p_gen = sub.add_parser(
+        "gen", help="génère les clients de services typés (vignemale_clients/)"
+    )
+    p_gen.add_argument("path", help="fichier ou dossier de l'app")
+    p_gen.set_defaults(func=cmd_gen)
 
     p_rgpd = sub.add_parser(
         "rgpd", help="données personnelles : map (carte) · export · forget"

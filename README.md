@@ -172,6 +172,20 @@ def create_order(body: Order) -> dict:
 
 (`vignemale.call("catalog", "get_item", id=…)` reste la primitive sous-jacente.)
 
+**Clients typés générés** — `vignemale gen monapp/` écrit
+`monapp/vignemale_clients/` (à committer, comme chez Encore) :
+
+```python
+from vignemale_clients import catalog
+
+item = catalog.get_item(id=7)      # signature typée, autocomplétion pyright,
+                                   # retour RE-TYPÉ dans le modèle (Item)
+```
+
+Les types des modèles sont importés sous `TYPE_CHECKING` : l'IDE les voit,
+le runtime n'exécute jamais le code de l'autre service pour annoter. À
+relancer après un changement d'API.
+
 Structure d'une app multi-services (un service = un dossier, comme Encore) :
 
 ```

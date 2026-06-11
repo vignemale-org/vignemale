@@ -1,0 +1,128 @@
+"""`vignemale gen` — clients de services TYPÉS, générés depuis le graphe meta.
+
+    vignemale gen monapp/
+
+génère `monapp/vignemale_clients/` (un module par service) :
+
+    from vignemale_clients import catalog
+
+    item = catalog.get_item(id=7)        # signature typée, retour re-typé
+    #      ^ autocomplétion et vérification pyright complètes
+
+Les types des modèles sont importés sous `TYPE_CHECKING` : l'IDE les voit,
+mais le runtime n'importe JAMAIS le code de l'autre service pour annoter —
+seule la validation du retour importe (paresseusement) le module du modèle.
+Le transport reste `vignemale.call` : direct en local, HTTP signé déployé.
+
+Le dossier généré se committe (comme les clients d'Encore) ; relancer
+`vignemale gen` après un changement d'API le met à jour.
+"""
+
+import os
+
+from .collect import extract_path
+
+_BUILTINS = {"int", "str", "float", "bool", "dict", "list"}
+
+_HEADER = '''"""Client typé du service « {service} » — GÉNÉRÉ par `vignemale gen`, ne pas éditer."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+from vignemale import call
+from vignemale._genutil import validate_model
+'''
+
+
+def _annotation(type_str, models) -> str:
+    if type_str is None:
+        return "Any"
+    t = type_str.strip()
+    if t in _BUILTINS or t in models:
+        return t
+    return "Any"
+
+
+def _function(service: str, ep: dict, models: dict, imports: set) -> str:
+    args = ["*"]
+    call_args = []
+    for pname, ptype in ep.get("params", {}).items():
+        ann = _annotation(ptype, models)
+        if ann in models:
+            imports.add(ann)
+        args.append(f"{pname}: {ann}")
+        call_args.append(f"{pname}={pname}")
+    if ep.get("request"):
+        req = _annotation(ep["request"], models)
+        if req in models:
+            imports.add(req)
+            args.append(f"body: {req} | dict")
+        else:
+            args.append("body: dict")
+        call_args.append("body=body")
+    signature = ", ".join(args) if args != ["*"] else ""
+
+    resp = ep.get("response")
+    call_expr = f'call("{service}", "{ep["name"]}"' + (
+        ", " + ", ".join(call_args) if call_args else ""
+    ) + ")"
+    if resp in models:
+        imports.add(resp)
+        returns = resp
+        body_line = (
+            f'    return validate_model("{models[resp]}", "{resp}", {call_expr})'
+        )
+    else:
+        returns = "dict"
+        body_line = f"    return {call_expr}"
+
+    doc = f'{ep.get("method", "?")} {ep.get("path", "?")}'
+    return (
+        f"\n\ndef {ep['name']}({signature}) -> {returns}:\n"
+        f'    """{doc}"""\n'
+        f"{body_line}\n"
+    )
+
+
+def generate(path: str) -> list:
+    """Génère `<path>/vignemale_clients/`. Renvoie les fichiers écrits."""
+    extracted, _app = extract_path(path)
+    models = extracted.get("model_modules", {})
+    out_dir = os.path.join(
+        path if os.path.isdir(path) else os.path.dirname(path), "vignemale_clients"
+    )
+    os.makedirs(out_dir, exist_ok=True)
+
+    written = []
+    service_modules = []
+    for svc in extracted["services"]:
+        endpoints = [e for e in svc["endpoints"] if not e.get("stream")]
+        if not endpoints:
+            continue
+        name = svc["name"]
+        imports: set = set()
+        body = "".join(_function(name, ep, models, imports) for ep in endpoints)
+        type_imports = ""
+        if imports:
+            lines = "\n".join(
+                f"    from {models[m]} import {m}" for m in sorted(imports)
+            )
+            type_imports = f"\nif TYPE_CHECKING:\n{lines}\n"
+        content = _HEADER.format(service=name) + type_imports + body
+        fpath = os.path.join(out_dir, f"{name}.py")
+        with open(fpath, "w") as f:
+            f.write(content)
+        written.append(fpath)
+        service_modules.append(name)
+
+    init = (
+        '"""Clients typés — GÉNÉRÉS par `vignemale gen`, ne pas éditer."""\n\n'
+        + "\n".join(f"from . import {m} as {m}" for m in sorted(service_modules))
+        + "\n"
+    )
+    init_path = os.path.join(out_dir, "__init__.py")
+    with open(init_path, "w") as f:
+        f.write(init)
+    written.append(init_path)
+    return written

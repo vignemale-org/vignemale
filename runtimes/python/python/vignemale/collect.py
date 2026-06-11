@@ -37,10 +37,12 @@ def _is_pydantic(cls) -> bool:
 
 
 def _extract_module(mod) -> tuple:
-    """Renvoie (service, endpoints, models, databases, auth_handler) pour un
-    module griffe — récursif : un package (dossier-service) agrège ses sous-modules."""
+    """Renvoie (service, endpoints, models, databases, auth_handler, model_modules)
+    pour un module griffe — récursif : un package (dossier-service) agrège ses
+    sous-modules."""
     service = None
     models = {}
+    model_modules = {}
     endpoints = []
     databases = []
     auth_fn = None
@@ -49,10 +51,11 @@ def _extract_module(mod) -> tuple:
         kind = m.kind.value
 
         if kind == "module":  # sous-module d'un dossier-service
-            svc2, eps2, mods2, dbs2, auth2 = _extract_module(m)
+            svc2, eps2, mods2, dbs2, auth2, modmods2 = _extract_module(m)
             service = service or svc2
             endpoints.extend(eps2)
             models.update(mods2)
+            model_modules.update(modmods2)
             databases.extend(db for db in dbs2 if db not in databases)
             auth_fn = auth_fn or auth2
             continue
@@ -67,6 +70,7 @@ def _extract_module(mod) -> tuple:
                         "default": _lit(attr.value),
                     }
             models[name] = fields
+            model_modules[name] = mod.path  # module d'origine (pour vignemale gen)
 
         elif kind == "class":
             # table vignemale.datamodel (classe avec `__database__ = "…"`) :
@@ -111,6 +115,7 @@ def _extract_module(mod) -> tuple:
                      if p.name == "body" and p.annotation is not None),
                     None,
                 )
+                runtime_params = ("body", "stream", "auth", "query", "headers")
                 endpoints.append({
                     "name": name,
                     "method": kw.get("method"),
@@ -119,9 +124,14 @@ def _extract_module(mod) -> tuple:
                     "auth": bool(kw.get("auth", False)),
                     "request": request,
                     "response": str(m.returns) if m.returns is not None else None,
+                    "params": {
+                        p.name: str(p.annotation) if p.annotation is not None else None
+                        for p in m.parameters
+                        if p.name not in runtime_params
+                    },
                 })
 
-    return service, endpoints, models, databases, auth_fn
+    return service, endpoints, models, databases, auth_fn, model_modules
 
 
 def extract_path(path: str) -> tuple[dict, str]:
@@ -141,6 +151,7 @@ def extract_path(path: str) -> tuple[dict, str]:
             elif (
                 os.path.isdir(full)
                 and not f.startswith(("_", "."))
+                and f != "vignemale_clients"  # clients générés ≠ service
                 and os.path.isfile(os.path.join(full, "__init__.py"))
             ):
                 modnames.append(f)  # dossier-service (package)
@@ -150,12 +161,14 @@ def extract_path(path: str) -> tuple[dict, str]:
         path = os.path.dirname(path)
 
     auth_handler = None
+    model_modules = {}
     for modname in modnames:
         mod = griffe.load(modname, search_paths=[path])
-        svc, eps, mods, dbs, auth_fn = _extract_module(mod)
+        svc, eps, mods, dbs, auth_fn, modmods = _extract_module(mod)
         if eps or svc:
             services.append({"name": svc or modname, "endpoints": eps, "databases": dbs})
         models.update(mods)
+        model_modules.update(modmods)
         databases.extend(db for db in dbs if db not in databases)
         if auth_fn and auth_handler is None:
             auth_handler = {"name": auth_fn, "service": svc or modname}
@@ -163,6 +176,7 @@ def extract_path(path: str) -> tuple[dict, str]:
     return {
         "services": services,
         "models": models,
+        "model_modules": model_modules,
         "databases": databases,
         "auth_handler": auth_handler,
     }, app_name
