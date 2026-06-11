@@ -96,6 +96,9 @@ def cmd_rgpd(args):
 
 
 def cmd_check(args):
+    if args.sql:
+        return _check_sql(args.path)
+
     from google.protobuf import json_format
 
     from vignemale.collect import build_meta, extract_path
@@ -107,6 +110,33 @@ def cmd_check(args):
         print(json.dumps(extracted, indent=2, ensure_ascii=False))
     else:
         print(json_format.MessageToJson(build_meta(extracted, app_name), indent=2))
+
+
+def _check_sql(path: str):
+    """Valide les requêtes sql() par PREPARE (mécanisme sqlx, au moment check)."""
+    _provision(path)
+    _load_app(path)
+    from vignemale.datamodel import check_sql_queries
+
+    report = check_sql_queries()
+    if not report:
+        print("vignemale: aucune requête sql() déclarée")
+        return
+    failed = 0
+    for r in report:
+        if r["ok"]:
+            params = ", ".join(r.get("params") or []) or "—"
+            cols = ", ".join(
+                f"{c['name']} {c['type']}" for c in (r.get("columns") or [])
+            )
+            print(f"  ✓ {r['query']}  ({params}) → {cols}")
+        else:
+            failed += 1
+            print(f"  ✗ {r['query']}  {r['error']}")
+    total = len(report)
+    if failed:
+        raise SystemExit(f"vignemale: {failed}/{total} requête(s) sql() invalide(s)")
+    print(f"vignemale: {total} requête(s) sql() validée(s) par PREPARE")
 
 
 def main(argv=None):
@@ -126,6 +156,11 @@ def main(argv=None):
     )
     p_check.add_argument("path", help="fichier ou dossier de l'app")
     p_check.add_argument("--raw", action="store_true", help="dict intermédiaire au lieu du meta.proto")
+    p_check.add_argument(
+        "--sql",
+        action="store_true",
+        help="valide les requêtes sql() par PREPARE Postgres (sans les exécuter)",
+    )
     p_check.set_defaults(func=cmd_check)
 
     p_rgpd = sub.add_parser(

@@ -220,6 +220,19 @@ fn sqldb_query(py: Python<'_>, dsn: String, sql: String, params_json: String) ->
     .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:#}")))
 }
 
+/// Valide une requête par PREPARE (sans l'exécuter) → JSON {params, columns}.
+#[pyfunction]
+fn sqldb_prepare(py: Python<'_>, dsn: String, sql: String) -> PyResult<String> {
+    py.allow_threads(|| {
+        shared_runtime().block_on(async {
+            let pool = sqldb::pool_for_dsn(&dsn)?;
+            sqldb::prepare(&pool, &sql).await
+        })
+    })
+    .map(|v| v.to_string())
+    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:#}")))
+}
+
 /// Exécute une commande (INSERT/UPDATE/DELETE/DDL), renvoie les lignes affectées.
 #[pyfunction]
 fn sqldb_execute(
@@ -686,6 +699,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(s3_roundtrip, m)?)?;
     m.add_function(wrap_pyfunction!(sqldb_query, m)?)?;
     m.add_function(wrap_pyfunction!(sqldb_execute, m)?)?;
+    m.add_function(wrap_pyfunction!(sqldb_prepare, m)?)?;
     m.add_function(wrap_pyfunction!(sqldb_orm, m)?)?;
     m.add_function(wrap_pyfunction!(sqldb_begin, m)?)?;
     m.add_function(wrap_pyfunction!(sqldb_tx_query, m)?)?;

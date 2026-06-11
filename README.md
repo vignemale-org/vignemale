@@ -253,8 +253,23 @@ user.plan = "pro"; user.save()
 
 Le schéma EST le code : table créée au premier usage, colonnes ajoutées au
 modèle ajoutées à la table (migration additive), le SQL brut reste
-l'échappatoire pour les requêtes complexes. Et comme le schéma déclare ses
-données personnelles, **le RGPD devient outillé** :
+l'échappatoire pour les requêtes complexes.
+
+**Validation des requêtes `sql()` au check** (le mécanisme `sqlx::query!`,
+déplacé au moment IfC) — `vignemale check --sql` applique d'abord les
+migrations additives puis fait un `PREPARE` Postgres de chaque requête, sans
+rien exécuter : syntaxe, tables, colonnes, types inférés. Une typo sort en
+CI, pas en prod :
+
+```
+$ vignemale check --sql monapp/
+  ✓ Produit.abordables  (float8) → id int8, name text, prix float8, stock int8
+  ✗ Article.typo  db error: ERROR: column "promotion" does not exist
+vignemale: 1/2 requête(s) sql() invalide(s)        # exit code ≠ 0 → CI rouge
+```
+
+Et comme le schéma déclare ses données personnelles, **le RGPD devient
+outillé** :
 
 ```bash
 vignemale rgpd map    monapp/                 # carte des données (pour le DPO)

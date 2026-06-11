@@ -42,6 +42,27 @@ pub async fn query(
     result
 }
 
+/// Valide une requête par PREPARE — sans l'exécuter (le mécanisme de
+/// `sqlx::query!`, déplacé au moment `vignemale check`). Postgres vérifie
+/// syntaxe, tables, colonnes, et infère les types : on les renvoie.
+pub async fn prepare(pool: &Pool, sql: &str) -> anyhow::Result<serde_json::Value> {
+    let started = std::time::Instant::now();
+    let result = async {
+        let client = get_conn(pool).await?;
+        let stmt = client.prepare(sql).await?;
+        let params: Vec<String> = stmt.params().iter().map(|t| t.to_string()).collect();
+        let columns: Vec<serde_json::Value> = stmt
+            .columns()
+            .iter()
+            .map(|c| serde_json::json!({"name": c.name(), "type": c.type_().to_string()}))
+            .collect();
+        Ok(serde_json::json!({"params": params, "columns": columns}))
+    }
+    .await;
+    trace_query(sql, started, &result);
+    result
+}
+
 /// Exécute une commande (INSERT/UPDATE/DELETE/DDL) et renvoie le nombre de
 /// lignes affectées.
 pub async fn execute(pool: &Pool, sql: &str, params: Vec<SqlParam>) -> anyhow::Result<u64> {

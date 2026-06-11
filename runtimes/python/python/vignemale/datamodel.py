@@ -42,6 +42,10 @@ from .sqldb import SQLDatabase, SQLError
 # Registre des tables déclarées (pour le RGPD et l'outillage).
 _tables: list = []
 
+# Registre des requêtes sql() déclarées : (classe, attribut, requête compilée)
+# — pour la validation par PREPARE de `vignemale check --sql`.
+_sql_queries: list = []
+
 _UNSET = PydanticUndefined
 
 
@@ -78,6 +82,7 @@ def sql(query: str, raw: bool = False, **param_types):
             rows = cls._db().query(query, *params)
             return rows if raw else [cls.model_validate(r) for r in rows]
 
+        run.__vignemale_sql__ = query  # pour la validation par PREPARE (check --sql)
         return classmethod(run)
 
     import re
@@ -124,6 +129,7 @@ def sql(query: str, raw: bool = False, **param_types):
         rows = cls._db().query(compiled, *bound)
         return rows if raw else [cls.model_validate(r) for r in rows]
 
+    run.__vignemale_sql__ = compiled  # pour la validation par PREPARE (check --sql)
     return classmethod(run)
 
 
@@ -174,6 +180,11 @@ class Table(BaseModel):
             cls.__tablename__ = cls.__name__.lower() + "s"
         cls.__ensured = False
         _tables.append(cls)
+        for attr, value in cls.__dict__.items():
+            fn = getattr(value, "__func__", None)
+            compiled = getattr(fn, "__vignemale_sql__", None)
+            if compiled:
+                _sql_queries.append((cls, attr, compiled))
 
     # --- plomberie : le descripteur part au core, le core fait le SQL ---
 
@@ -286,6 +297,14 @@ class Table(BaseModel):
     # --- RGPD : introspection ---
 
     @classmethod
+    def _prepare_check(cls, query: str) -> dict:
+        try:
+            out = _core.sqldb_prepare(cls._db().dsn, query)
+        except RuntimeError as e:
+            raise SQLError(str(e)) from None
+        return json.loads(out)
+
+    @classmethod
     def pii_fields(cls) -> dict:
         """{champ: finalité} des données personnelles déclarées."""
         out = {}
@@ -294,3 +313,23 @@ class Table(BaseModel):
             if isinstance(extra, dict) and extra.get("pii"):
                 out[name] = extra.get("purpose", "non précisée")
         return out
+
+
+def check_sql_queries() -> list:
+    """Valide chaque requête `sql()` déclarée par un PREPARE Postgres — le
+    mécanisme de `sqlx::query!`, au moment `vignemale check` : syntaxe,
+    tables, colonnes, types inférés. Rien n'est exécuté.
+
+    Renvoie un rapport par requête : {query, ok, params?, columns?, error?}.
+    """
+    for t in _tables:
+        t.ensure_table()  # les tables doivent exister pour que PREPARE valide
+    report = []
+    for cls, attr, compiled in _sql_queries:
+        label = f"{cls.__name__}.{attr}"
+        try:
+            info = cls._prepare_check(compiled)
+            report.append({"query": label, "ok": True, **info})
+        except SQLError as e:
+            report.append({"query": label, "ok": False, "error": str(e)})
+    return report

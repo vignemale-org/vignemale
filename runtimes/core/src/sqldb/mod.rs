@@ -20,7 +20,7 @@ pub mod orm;
 mod transaction;
 mod val;
 
-pub use client::{execute, query};
+pub use client::{execute, prepare, query};
 pub use manager::pool_for_dsn;
 pub use transaction::{tx_begin, tx_commit, tx_execute, tx_query, tx_rollback};
 pub use val::SqlParam;
