@@ -1,6 +1,6 @@
 """`vignemale.datamodel` — tables Pydantic : le schéma EST le code, le RGPD aussi.
 
-    from vignemale.datamodel import Table, PII
+    from vignemale.datamodel import Table, PII, sql
 
     class User(Table):
         __database__ = "users"          # la SQLDatabase qui héberge la table
@@ -11,32 +11,33 @@
         name: str = PII(purpose="compte")
         plan: str = "free"
 
+        # requête custom attachée à la table (SQL assumé, typé au retour)
+        pros = sql("SELECT * FROM users WHERE plan = $1 ORDER BY id")
+
     user = User.create(email="ada@ex.com", name="Ada")   # typé, validé
     user = User.find_one(email="ada@ex.com")
-    user.plan = "pro"; user.save()
+    User.pros("pro")                                     # → list[User]
 
-Ce que ça apporte :
-- **CRUD typé** (create/get/find/find_one/count/save/delete) — zéro SQL à la
-  main ; le SQL brut (`SQLDatabase.query`) reste l'échappatoire assumée pour
-  les requêtes complexes (jointures, agrégats…).
-- **Schéma automatique** : la table est créée au premier usage, et les
-  colonnes ajoutées au modèle sont ajoutées à la table (migration additive).
-- **RGPD natif** : `PII(purpose=…)` marque les données personnelles,
-  `__subject__` relie chaque ligne à une personne → `vignemale rgpd
-  map/export/forget` (cf. vignemale.rgpd). `__on_forget__` = "delete"
-  (défaut) ou "anonymize" (les champs PII sont caviardés, la ligne reste).
+**L'ORM vit dans le core Rust** : ce module décrit la table (un descripteur
+JSON) et délègue — génération SQL (sea-query), whitelist des colonnes,
+création/migration additive du schéma, exécution. Le SDK n'assemble jamais
+de SQL ; un futur SDK (JS…) enverra le même descripteur au même moteur.
 
-Tout passe par le core Rust (pool, logs, provisioning local automatique).
+RGPD natif : `PII(purpose=…)` marque les données personnelles, `__subject__`
+relie chaque ligne à une personne → `vignemale rgpd map/export/forget`.
+`__on_forget__` = "delete" (défaut) ou "anonymize".
 """
 
 import datetime
+import json
 import types as _types
 import typing
 
 from pydantic import BaseModel, Field
 from pydantic_core import PydanticUndefined
 
-from .sqldb import SQLDatabase
+from . import _core
+from .sqldb import SQLDatabase, SQLError
 
 # Registre des tables déclarées (pour le RGPD et l'outillage).
 _tables: list = []
@@ -49,17 +50,40 @@ def PII(default=_UNSET, *, purpose: str = "non précisée"):
     return Field(default=default, json_schema_extra={"pii": True, "purpose": purpose})
 
 
-_SQL_TYPES = {
-    int: "BIGINT",
-    str: "TEXT",
-    bool: "BOOLEAN",
-    float: "DOUBLE PRECISION",
-    datetime.datetime: "TIMESTAMPTZ",
-    datetime.date: "DATE",
-    dict: "JSONB",
-    list: "JSONB",
-}
+def sql(query: str, raw: bool = False):
+    """Requête SQL custom attachée à la table (échappatoire assumée).
 
+        class User(Table):
+            ...
+            pros = sql("SELECT * FROM users WHERE plan = $1")
+
+        User.pros("pro")        # → list[User] (lignes re-typées dans le modèle)
+
+    `raw=True` → liste de dicts (pour les jointures/agrégats qui ne
+    correspondent pas aux colonnes de la table).
+    """
+
+    def run(cls, *params):
+        cls._ensure()
+        rows = cls._db().query(query, *params)
+        if raw:
+            return rows
+        return [cls.model_validate(r) for r in rows]
+
+    return classmethod(run)
+
+
+# Types logiques envoyés au core (qui fait le mapping SQL).
+_LOGICAL_TYPES = {
+    int: "int",
+    str: "str",
+    bool: "bool",
+    float: "float",
+    datetime.datetime: "datetime",
+    datetime.date: "date",
+    dict: "json",
+    list: "json",
+}
 
 _UNION_TYPES = (typing.Union, getattr(_types, "UnionType", typing.Union))
 
@@ -73,13 +97,13 @@ def _unwrap(annotation):
     return annotation, False
 
 
-def _sql_type(annotation) -> str:
+def _logical_type(annotation) -> str:
     base, _ = _unwrap(annotation)
     base = typing.get_origin(base) or base  # list[str] → list, dict[...] → dict
-    sql = _SQL_TYPES.get(base)
-    if sql is None:
+    logical = _LOGICAL_TYPES.get(base)
+    if logical is None:
         raise TypeError(f"type de colonne non supporté: {annotation!r}")
-    return sql
+    return logical
 
 
 class Table(BaseModel):
@@ -97,7 +121,7 @@ class Table(BaseModel):
         cls.__ensured = False
         _tables.append(cls)
 
-    # --- plomberie ---
+    # --- plomberie : le descripteur part au core, le core fait le SQL ---
 
     @classmethod
     def _db(cls) -> SQLDatabase:
@@ -110,84 +134,62 @@ class Table(BaseModel):
         return {n: f for n, f in cls.model_fields.items()}
 
     @classmethod
+    def _schema(cls) -> str:
+        columns = []
+        for name, f in cls._columns().items():
+            _, nullable = _unwrap(f.annotation)
+            columns.append(
+                {
+                    "name": name,
+                    "typ": _logical_type(f.annotation),
+                    "nullable": nullable or not f.is_required(),
+                    "primary_key": name == "id",
+                }
+            )
+        return json.dumps({"table": cls.__tablename__, "columns": columns})
+
+    @classmethod
+    def _raw_op(cls, op: str, **args):
+        try:
+            out = _core.sqldb_orm(
+                cls._db().dsn, op, cls._schema(), json.dumps(args, default=str)
+            )
+        except RuntimeError as e:
+            raise SQLError(str(e)) from None
+        return json.loads(out)
+
+    @classmethod
+    def _op(cls, op: str, **args):
+        cls._ensure()
+        return cls._raw_op(op, **args)
+
+    @classmethod
     def _ensure(cls) -> None:
         """Crée la table au premier usage ; ajoute les colonnes manquantes
         (migration additive — les changements destructifs restent manuels)."""
         if cls.__ensured:
             return
-        db, table = cls._db(), cls.__tablename__
-        cols = []
-        for name, f in cls._columns().items():
-            if name == "id":
-                cols.append('"id" BIGSERIAL PRIMARY KEY')
-                continue
-            _, nullable = _unwrap(f.annotation)
-            not_null = "" if (nullable or not f.is_required()) else " NOT NULL"
-            cols.append(f'"{name}" {_sql_type(f.annotation)}{not_null}')
-        db.execute(f'CREATE TABLE IF NOT EXISTS "{table}" ({", ".join(cols)})')
-
-        existing = {
-            r["column_name"]
-            for r in db.query(
-                "SELECT column_name FROM information_schema.columns WHERE table_name = $1",
-                table,
-            )
-        }
-        for name, f in cls._columns().items():
-            if name not in existing:
-                db.execute(
-                    f'ALTER TABLE "{table}" ADD COLUMN "{name}" {_sql_type(f.annotation)}'
-                )
+        cls._raw_op("ensure")
         cls.__ensured = True
 
-    @classmethod
-    def _where(cls, where: dict, start: int = 1):
-        if not where:
-            return "", []
-        parts, values, i = [], [], start
-        for k, v in where.items():
-            if v is None:
-                parts.append(f'"{k}" IS NULL')
-            else:
-                parts.append(f'"{k}" = ${i}')
-                values.append(v)
-                i += 1
-        return " WHERE " + " AND ".join(parts), values
-
-    # --- CRUD ---
+    # --- CRUD (délégué au core) ---
 
     @classmethod
     def create(cls, **fields):
-        cls._ensure()
         obj = cls(**fields)  # validation Pydantic
-        data = obj.model_dump()
-        if data.get("id") is None:
-            data.pop("id", None)
-        names = ", ".join(f'"{c}"' for c in data)
-        ph = ", ".join(f"${i + 1}" for i in range(len(data)))
-        row = cls._db().query_row(
-            f'INSERT INTO "{cls.__tablename__}" ({names}) VALUES ({ph}) RETURNING *',
-            *data.values(),
-        )
-        return cls.model_validate(row)
+        values = obj.model_dump()
+        if values.get("id") is None:
+            values.pop("id", None)
+        return cls.model_validate(cls._op("insert", values=values))
 
     @classmethod
     def get(cls, id):
-        cls._ensure()
-        row = cls._db().query_row(
-            f'SELECT * FROM "{cls.__tablename__}" WHERE "id" = $1', id
-        )
+        row = cls._op("get", pk=id)
         return cls.model_validate(row) if row is not None else None
 
     @classmethod
     def find(cls, **where) -> list:
-        cls._ensure()
-        cond, values = cls._where(where)
-        order = ' ORDER BY "id"' if "id" in cls.model_fields else ""
-        rows = cls._db().query(
-            f'SELECT * FROM "{cls.__tablename__}"{cond}{order}', *values
-        )
-        return [cls.model_validate(r) for r in rows]
+        return [cls.model_validate(r) for r in cls._op("find", where=where)]
 
     @classmethod
     def find_one(cls, **where):
@@ -196,42 +198,31 @@ class Table(BaseModel):
 
     @classmethod
     def count(cls, **where) -> int:
-        cls._ensure()
-        cond, values = cls._where(where)
-        row = cls._db().query_row(
-            f'SELECT count(*) AS n FROM "{cls.__tablename__}"{cond}', *values
-        )
-        return row["n"]
+        return cls._op("count", where=where)
 
     def save(self):
-        type(self)._ensure()
         if getattr(self, "id", None) is None:
             raise ValueError("save() exige un id — utilise create()")
-        data = self.model_dump()
-        data.pop("id")
-        sets = ", ".join(f'"{c}" = ${i + 1}' for i, c in enumerate(data))
-        type(self)._db().execute(
-            f'UPDATE "{self.__tablename__}" SET {sets} WHERE "id" = ${len(data) + 1}',
-            *data.values(),
-            self.id,
-        )
+        values = self.model_dump()
+        values.pop("id")
+        type(self)._op("update", pk=self.id, values=values)
         return self
 
     def delete(self) -> None:
-        type(self)._ensure()
-        type(self)._db().execute(
-            f'DELETE FROM "{self.__tablename__}" WHERE "id" = $1', self.id
-        )
+        type(self)._op("delete", pk=self.id)
 
     @classmethod
     def delete_where(cls, **where) -> int:
-        cls._ensure()
-        cond, values = cls._where(where)
-        if not cond:
+        if not where:
             raise ValueError("delete_where() exige au moins un critère")
-        return cls._db().execute(
-            f'DELETE FROM "{cls.__tablename__}"{cond}', *values
-        )
+        return cls._op("delete_where", where=where)
+
+    @classmethod
+    def update_where(cls, values: dict, **where) -> int:
+        """UPDATE en masse (utilisé par l'anonymisation RGPD)."""
+        if not where:
+            raise ValueError("update_where() exige au moins un critère")
+        return cls._op("update_where", values=values, where=where)
 
     # --- RGPD : introspection ---
 

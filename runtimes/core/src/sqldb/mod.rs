@@ -16,6 +16,7 @@
 
 mod client;
 mod manager;
+pub mod orm;
 mod transaction;
 mod val;
 

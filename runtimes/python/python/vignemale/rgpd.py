@@ -86,16 +86,8 @@ def _anonymize(t, where: dict) -> None:
     pii = t.pii_fields()
     if not pii:
         return
-    sets, values, i = [], [], 1
+    values = {}
     for name in pii:
         base, _ = _model._unwrap(t.model_fields[name].annotation)
-        if base is str:
-            sets.append(f'"{name}" = ${i}')
-            values.append("[effacé]")
-            i += 1
-        else:
-            sets.append(f'"{name}" = NULL')
-    cond, wvalues = t._where(where, start=i)
-    t._db().execute(
-        f'UPDATE "{t.__tablename__}" SET {", ".join(sets)}{cond}', *values, *wvalues
-    )
+        values[name] = "[effacé]" if base is str else None
+    t.update_where(values, **where)

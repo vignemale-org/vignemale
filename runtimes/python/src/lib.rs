@@ -238,6 +238,77 @@ fn sqldb_execute(
     .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:#}")))
 }
 
+// --- ORM (le moteur vit dans le CORE ; les SDKs envoient un descripteur) ---
+
+/// Opération ORM générique : `op` ∈ {ensure, insert, get, find, count,
+/// update, update_where, delete, delete_where}. `schema_json` décrit la
+/// table ; `args_json` porte {values, where, pk} selon l'opération.
+/// Renvoie le résultat en JSON (ligne, lignes, compteur ou null).
+#[pyfunction]
+fn sqldb_orm(
+    py: Python<'_>,
+    dsn: String,
+    op: String,
+    schema_json: String,
+    args_json: String,
+) -> PyResult<String> {
+    let schema: sqldb::orm::TableSchema = serde_json::from_str(&schema_json)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("schéma invalide: {e}")))?;
+    let args: serde_json::Value = serde_json::from_str(&args_json)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("args invalides: {e}")))?;
+    let empty = serde_json::Map::new();
+    let map_of = |key: &str| -> serde_json::Map<String, serde_json::Value> {
+        args.get(key)
+            .and_then(|v| v.as_object())
+            .cloned()
+            .unwrap_or_else(|| empty.clone())
+    };
+    py.allow_threads(|| {
+        shared_runtime().block_on(async {
+            let pool = sqldb::pool_for_dsn(&dsn)?;
+            use sqldb::orm;
+            let result: serde_json::Value = match op.as_str() {
+                "ensure" => {
+                    orm::ensure(&pool, &schema).await?;
+                    serde_json::Value::Null
+                }
+                "insert" => orm::insert(&pool, &schema, &map_of("values")).await?,
+                "get" => {
+                    orm::get(&pool, &schema, args.get("pk").cloned().unwrap_or_default())
+                        .await?
+                }
+                "find" => orm::find(&pool, &schema, &map_of("where")).await?,
+                "count" => orm::count(&pool, &schema, &map_of("where")).await?.into(),
+                "update" => orm::update(
+                    &pool,
+                    &schema,
+                    args.get("pk").cloned().unwrap_or_default(),
+                    &map_of("values"),
+                )
+                .await?
+                .into(),
+                "update_where" => {
+                    orm::update_where(&pool, &schema, &map_of("values"), &map_of("where"))
+                        .await?
+                        .into()
+                }
+                "delete" => {
+                    orm::delete(&pool, &schema, args.get("pk").cloned().unwrap_or_default())
+                        .await?
+                        .into()
+                }
+                "delete_where" => orm::delete_where(&pool, &schema, &map_of("where"))
+                    .await?
+                    .into(),
+                other => anyhow::bail!("opération ORM inconnue: {other:?}"),
+            };
+            Ok(result)
+        })
+    })
+    .map(|v: serde_json::Value| v.to_string())
+    .map_err(|e: anyhow::Error| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:#}")))
+}
+
 // --- sqldb : transactions (begin/commit/rollback sans lifetime, façon Encore) ---
 
 /// Ouvre une transaction et renvoie son identifiant.
@@ -615,6 +686,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(s3_roundtrip, m)?)?;
     m.add_function(wrap_pyfunction!(sqldb_query, m)?)?;
     m.add_function(wrap_pyfunction!(sqldb_execute, m)?)?;
+    m.add_function(wrap_pyfunction!(sqldb_orm, m)?)?;
     m.add_function(wrap_pyfunction!(sqldb_begin, m)?)?;
     m.add_function(wrap_pyfunction!(sqldb_tx_query, m)?)?;
     m.add_function(wrap_pyfunction!(sqldb_tx_execute, m)?)?;

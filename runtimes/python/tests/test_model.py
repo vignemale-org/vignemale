@@ -6,7 +6,7 @@ from typing import Optional
 import pytest
 
 from vignemale import SQLDatabase
-from vignemale.datamodel import Table, _tables
+from vignemale.datamodel import Table, _tables, sql
 
 PG = os.environ.get("VIGNEMALE_TEST_PG")
 needs_pg = pytest.mark.skipif(
@@ -68,6 +68,49 @@ def test_crud_typed_roundtrip():
 def test_validation_pydantic_au_create():
     with pytest.raises(Exception):  # name requis
         Gadget.create(tags={})
+
+
+@needs_pg
+def test_requete_sql_custom_attachee_a_la_table():
+    """`sql(...)` attache une requête custom à la table — typée au retour,
+    ou brute (raw=True) pour les agrégats. Le CRUD standard reste au core."""
+
+    class Outil(Table):
+        __database__ = "pytest_model"
+        __tablename__ = "vgm_gadgets"
+
+        id: Optional[int] = None
+        name: str
+        tags: dict = {}
+        active: bool = True
+        score: Optional[float] = None
+
+        meilleurs = sql(
+            "SELECT * FROM vgm_gadgets WHERE score >= $1 ORDER BY score DESC"
+        )
+        stats = sql(
+            "SELECT count(*) AS n, max(score) AS top FROM vgm_gadgets", raw=True
+        )
+
+    Outil.create(name="piolet", score=5.0)
+    Outil.create(name="corde", score=9.0)
+    Outil.create(name="gourde", score=1.0)
+
+    tops = Outil.meilleurs(4.0)
+    assert [t.name for t in tops] == ["corde", "piolet"]
+    assert isinstance(tops[0], Outil)  # lignes re-typées dans le modèle
+
+    (s,) = Outil.stats()
+    assert s["n"] == 3 and s["top"] == 9.0
+
+
+@needs_pg
+def test_injection_impossible_par_nom_de_colonne():
+    """La whitelist des colonnes vit dans le CORE : un nom inconnu est rejeté."""
+    from vignemale import SQLError
+
+    with pytest.raises(SQLError, match="colonne inconnue"):
+        Gadget.find(**{"nexiste_pas": 1})
 
 
 @needs_pg

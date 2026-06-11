@@ -29,6 +29,9 @@ deadpool-postgres = "0.14"
 postgres-native-tls = "0.5"
 native-tls = "0.2"
 rust_decimal = { version = "1", features = ["db-tokio-postgres"] }
+# Génération SQL de l'ORM (le builder sous SeaORM) — dynamique à l'exécution,
+# c'est ce qui permet de piloter l'ORM depuis les SDKs (Python, JS demain).
+sea-query = { version = "0.32", features = ["with-json"] }
 bytes = "1"
 chrono = "0.4"
 uuid = { version = "1", features = ["v4"] }
