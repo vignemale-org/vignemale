@@ -17,4 +17,6 @@ mod server;
 pub use endpoint::Endpoint;
 pub use error::error_json;
 pub use manager::Manager;
-pub use server::{Handler, HandlerKind, Request, Response, StreamHandler, StreamSink};
+pub use server::{
+    AuthHandler, AuthOutcome, Handler, HandlerKind, Request, Response, StreamHandler, StreamSink,
+};

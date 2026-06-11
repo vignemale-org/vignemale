@@ -257,6 +257,60 @@ fn format_py_err(py: Python<'_>, e: &PyErr) -> String {
         .unwrap_or_else(|_| fallback())
 }
 
+/// Implémente le trait `AuthHandler` du core en appelant la fonction Python
+/// (`@auth_handler`). `None` → 401 ; APIError levée → son statut/corps ;
+/// autre exception → 500 (traceback loggé).
+struct PyAuthHandler {
+    func: Py<PyAny>,
+}
+
+impl api::AuthHandler for PyAuthHandler {
+    fn authenticate(&self, token: &str) -> api::AuthOutcome {
+        Python::with_gil(|py| match self.func.bind(py).call1((token,)) {
+            Ok(result) => {
+                if result.is_none() {
+                    return api::AuthOutcome::Denied {
+                        status: 401,
+                        body: api::error_json("unauthenticated", "token invalide", None),
+                    };
+                }
+                match py
+                    .import_bound("json")
+                    .and_then(|json| json.call_method1("dumps", (result,)))
+                    .and_then(|s| s.extract::<String>())
+                {
+                    Ok(data) => api::AuthOutcome::Authenticated(data),
+                    Err(_) => api::AuthOutcome::Denied {
+                        status: 500,
+                        body: api::error_json(
+                            "internal",
+                            "données d'auth non sérialisables",
+                            None,
+                        ),
+                    },
+                }
+            }
+            Err(e) => {
+                if let Some(resp) = http_error_response(py, &e) {
+                    return api::AuthOutcome::Denied {
+                        status: resp.status,
+                        body: resp.body,
+                    };
+                }
+                tracing::error!(
+                    target: "vignemale::app",
+                    traceback = %format_py_err(py, &e),
+                    "exception dans l'auth handler"
+                );
+                api::AuthOutcome::Denied {
+                    status: 500,
+                    body: api::error_json("internal", "internal error", None),
+                }
+            }
+        })
+    }
+}
+
 struct PyHandler {
     func: Py<PyAny>,
 }
@@ -327,6 +381,12 @@ fn build_kwargs<'py>(
         headers.set_item(k, v)?;
     }
     kwargs.set_item("headers", headers)?;
+    if let Some(auth_json) = &req.auth_data {
+        let parsed = py
+            .import_bound("json")?
+            .call_method1("loads", (auth_json.as_str(),))?;
+        kwargs.set_item("auth", parsed)?;
+    }
     if !req.body.is_empty() {
         let invalid =
             || pyo3::exceptions::PyValueError::new_err("corps JSON invalide");
@@ -400,24 +460,37 @@ fn call_py_stream_handler(
 }
 
 /// Démarre le serveur HTTP avec les endpoints donnés (bloque jusqu'à l'arrêt).
-/// `endpoints` = liste de (name, method, path, handler, stream).
+/// `endpoints` = liste de (name, method, path, handler, stream, auth).
 #[pyfunction]
+#[pyo3(signature = (endpoints, addr, auth_handler=None))]
 fn serve(
     py: Python<'_>,
-    endpoints: Vec<(String, String, String, Py<PyAny>, bool)>,
+    endpoints: Vec<(String, String, String, Py<PyAny>, bool, bool)>,
     addr: String,
+    auth_handler: Option<Py<PyAny>>,
 ) -> PyResult<()> {
     let socket: std::net::SocketAddr = addr
         .parse()
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("adresse invalide: {e}")))?;
     let mut mgr = api::Manager::new();
-    for (name, method, path, func, stream) in endpoints {
+    for (name, method, path, func, stream, requires_auth) in endpoints {
         let kind = if stream {
             api::HandlerKind::Stream(Arc::new(PyStreamHandler { func }))
         } else {
             api::HandlerKind::Unary(Arc::new(PyHandler { func }))
         };
-        mgr.register(api::Endpoint { name, method, path }, kind);
+        mgr.register(
+            api::Endpoint {
+                name,
+                method,
+                path,
+                requires_auth,
+            },
+            kind,
+        );
+    }
+    if let Some(func) = auth_handler {
+        mgr.set_auth_handler(Arc::new(PyAuthHandler { func }));
     }
     // Le serveur tourne sur un thread dédié (qui ne tient pas le GIL) ; le thread
     // principal relâche le GIL et attend, pour que les handlers puissent l'acquérir.

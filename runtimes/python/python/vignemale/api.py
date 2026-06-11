@@ -126,7 +126,34 @@ def _pydantic_model(tp):
         return None
 
 
-def api(*, method: str, path: str, stream: bool = False) -> Callable:
+# --- authentification (façon Encore : UN auth handler par app) ---
+
+_auth_handler = None
+_auth_required: list = []  # noms des endpoints protégés (validation au serve)
+
+
+def auth_handler(func: Callable) -> Callable:
+    """Déclare LE handler d'authentification de l'app (un seul).
+
+    Reçoit le token (`Authorization: Bearer …`, ou `?token=` pour les clients
+    qui ne peuvent pas poser d'en-tête, ex. EventSource). Renvoie les données
+    d'auth (dict ou modèle Pydantic) si le token est valide, `None` sinon
+    (→ 401 `unauthenticated`). Les endpoints `@api(..., auth=True)` reçoivent
+    ces données dans le paramètre `auth` s'ils le déclarent.
+
+        @auth_handler
+        def check(token):
+            user = verify(token)
+            return {"user_id": user.id} if user else None
+    """
+    global _auth_handler
+    if _auth_handler is not None:
+        raise RuntimeError("un auth_handler est déjà déclaré (un seul par app)")
+    _auth_handler = func
+    return func
+
+
+def api(*, method: str, path: str, stream: bool = False, auth: bool = False) -> Callable:
     """Déclare une fonction comme endpoint HTTP.
 
     - Si le paramètre `body` est annoté avec un modèle Pydantic, la requête est
@@ -134,6 +161,8 @@ def api(*, method: str, path: str, stream: bool = False) -> Callable:
       `invalid_argument` avec le détail Pydantic).
     - Si le retour est un modèle Pydantic, il est sérialisé automatiquement.
     - `stream=True` : le handler reçoit `stream` et pousse des fragments (SSE).
+    - `auth=True` : la requête passe d'abord par le `@auth_handler` de l'app
+      (sinon → 401 `unauthenticated`) ; le handler reçoit `auth` s'il le déclare.
     """
 
     def decorator(func: Callable) -> Callable:
@@ -155,8 +184,9 @@ def api(*, method: str, path: str, stream: bool = False) -> Callable:
 
         @functools.wraps(func)
         def wrapper(**kwargs):
-            # le runtime fournit tout (params, query, headers, body) ;
+            # le runtime fournit tout (params, query, headers, body, auth) ;
             # on ne transmet que ce que la signature du handler déclare.
+            # L'authentification elle-même est jouée par le CORE, avant l'appel.
             if not accepts_var_kwargs:
                 kwargs = {k: v for k, v in kwargs.items() if k in accepted}
             if body_required and "body" not in kwargs:
@@ -177,16 +207,35 @@ def api(*, method: str, path: str, stream: bool = False) -> Callable:
                 result = result.model_dump()
             return result
 
-        _endpoints.append((func.__name__, method.upper(), path, wrapper, stream))
+        if auth:
+            _auth_required.append(func.__name__)
+        _endpoints.append((func.__name__, method.upper(), path, wrapper, stream, auth))
         return func  # on renvoie la fonction typée d'origine (pour pyright)
 
     return decorator
 
 
+def _auth_adapter(token: str):
+    """Normalise le retour de l'auth handler avant le passage au core."""
+    data = _auth_handler(token)
+    if data is not None and _pydantic_model(type(data)) is not None:
+        data = data.model_dump()
+    return data
+
+
 def serve(addr: str = "127.0.0.1:8080") -> None:
     """Démarre le serveur HTTP (bloque jusqu'à Ctrl-C)."""
+    if _auth_required and _auth_handler is None:
+        raise SystemExit(
+            "vignemale: endpoint(s) protégé(s) sans @auth_handler déclaré : "
+            + ", ".join(_auth_required)
+        )
     print(f"vignemale: {len(_endpoints)} endpoint(s) sur http://{addr}", flush=True)
     try:
-        _core.serve(list(_endpoints), addr)
+        _core.serve(
+            list(_endpoints),
+            addr,
+            _auth_adapter if _auth_handler is not None else None,
+        )
     except KeyboardInterrupt:
         print("vignemale: arrêté", flush=True)

@@ -7,4 +7,7 @@ pub struct Endpoint {
     pub name: String,
     pub method: String,
     pub path: String,
+    /// L'accès exige l'authentification (le serveur passe par l'`AuthHandler`
+    /// AVANT d'appeler le handler — et avant d'ouvrir le flux pour un stream).
+    pub requires_auth: bool,
 }

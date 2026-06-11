@@ -73,3 +73,19 @@ def test_sql_database_in_meta():
     assert got["sqlDatabases"] == [{"name": "todo"}]
     (svc,) = got["svcs"]
     assert svc["databases"] == ["todo"]
+
+
+def test_auth_extracted():
+    """`@auth_handler` et `auth=True` sont détectés statiquement → meta."""
+    extracted, _ = extract_path(os.path.join(EXAMPLES, "secure.py"))
+    assert extracted["auth_handler"]["name"] == "check_token"
+    (svc,) = extracted["services"]
+    eps = {e["name"]: e for e in svc["endpoints"]}
+    assert eps["me"]["auth"] is True
+    assert eps["public"]["auth"] is False
+
+    got = meta_json(os.path.join(EXAMPLES, "secure.py"))
+    assert got["authHandler"]["name"] == "check_token"
+    rpcs = {r["name"]: r for r in got["svcs"][0]["rpcs"]}
+    assert rpcs["me"]["accessType"] == "AUTH"
+    assert rpcs["public"]["accessType"] == "PUBLIC"

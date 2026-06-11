@@ -37,11 +37,12 @@ def _is_pydantic(cls) -> bool:
 
 
 def _extract_module(mod) -> tuple:
-    """Renvoie (service_name | None, endpoints, models, databases) pour un module griffe."""
+    """Renvoie (service, endpoints, models, databases, auth_handler) pour un module griffe."""
     service = None
     models = {}
     endpoints = []
     databases = []
+    auth_fn = None
 
     for name, m in mod.members.items():
         kind = m.kind.value
@@ -73,6 +74,10 @@ def _extract_module(mod) -> tuple:
             for deco in m.decorators:
                 call = deco.value
                 if type(call).__name__ != "ExprCall":
+                    # décorateur sans parenthèses : @auth_handler
+                    dname = str(call)
+                    if dname == "auth_handler" or dname.endswith(".auth_handler"):
+                        auth_fn = name
                     continue
                 cfn = str(call.function)
                 if cfn != "api" and not cfn.endswith(".api"):
@@ -92,11 +97,12 @@ def _extract_module(mod) -> tuple:
                     "method": kw.get("method"),
                     "path": kw.get("path"),
                     "stream": bool(kw.get("stream", False)),
+                    "auth": bool(kw.get("auth", False)),
                     "request": request,
                     "response": str(m.returns) if m.returns is not None else None,
                 })
 
-    return service, endpoints, models, databases
+    return service, endpoints, models, databases, auth_fn
 
 
 def extract_path(path: str) -> tuple[dict, str]:
@@ -114,16 +120,24 @@ def extract_path(path: str) -> tuple[dict, str]:
         files = [os.path.basename(path)]
         path = os.path.dirname(path)
 
+    auth_handler = None
     for f in files:
         modname = f[:-3]
         mod = griffe.load(modname, search_paths=[path])
-        svc, eps, mods, dbs = _extract_module(mod)
+        svc, eps, mods, dbs, auth_fn = _extract_module(mod)
         if eps or svc:
             services.append({"name": svc or modname, "endpoints": eps, "databases": dbs})
         models.update(mods)
         databases.extend(db for db in dbs if db not in databases)
+        if auth_fn and auth_handler is None:
+            auth_handler = {"name": auth_fn, "service": svc or modname}
 
-    return {"services": services, "models": models, "databases": databases}, app_name
+    return {
+        "services": services,
+        "models": models,
+        "databases": databases,
+        "auth_handler": auth_handler,
+    }, app_name
 
 
 # ----- 2) dict -> vrai meta.proto (Data) -----
@@ -180,6 +194,11 @@ def build_meta(extracted: dict, app_name: str) -> "meta.Data":
         db = data.sql_databases.add()
         db.name = db_name
 
+    auth = extracted.get("auth_handler")
+    if auth:
+        data.auth_handler.name = auth["name"]
+        data.auth_handler.service_name = auth["service"]
+
     for svc_info in extracted["services"]:
         svc = data.svcs.add()
         svc.name = svc_info["name"]
@@ -189,7 +208,7 @@ def build_meta(extracted: dict, app_name: str) -> "meta.Data":
             rpc = svc.rpcs.add()
             rpc.name = ep["name"]
             rpc.service_name = svc_info["name"]
-            rpc.access_type = meta.RPC.PUBLIC
+            rpc.access_type = meta.RPC.AUTH if ep.get("auth") else meta.RPC.PUBLIC
             rpc.proto = meta.RPC.REGULAR
             if ep["method"]:
                 rpc.http_methods.append(ep["method"])
