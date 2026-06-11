@@ -133,6 +133,17 @@ def _pydantic_model(tp):
         return None
 
 
+def _to_jsonable(v):
+    """Sérialise récursivement (modèles Pydantic imbriqués compris)."""
+    if _pydantic_model(type(v)) is not None:
+        return v.model_dump()
+    if isinstance(v, dict):
+        return {k: _to_jsonable(x) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_to_jsonable(x) for x in v]
+    return v
+
+
 # --- authentification (façon Encore : UN auth handler par app) ---
 
 _auth_handler = None
@@ -233,9 +244,7 @@ def api(
                 result = func(**kwargs)
             finally:
                 _request_ctx.reset(ctx_token)
-            if _pydantic_model(type(result)) is not None:
-                result = result.model_dump()
-            return result
+            return _to_jsonable(result)
 
         if auth:
             _auth_required.append(func.__name__)

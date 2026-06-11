@@ -165,12 +165,17 @@ class Table(BaseModel):
 
     @classmethod
     def _ensure(cls) -> None:
-        """Crée la table au premier usage ; ajoute les colonnes manquantes
-        (migration additive — les changements destructifs restent manuels)."""
         if cls.__ensured:
             return
         cls._raw_op("ensure")
         cls.__ensured = True
+
+    @classmethod
+    def ensure_table(cls) -> None:
+        """Crée la table si besoin et ajoute les colonnes manquantes
+        (migration additive). Appelée automatiquement par le CRUD ; à appeler
+        explicitement avant d'attaquer la table en SQL brut (transactions…)."""
+        cls._ensure()
 
     # --- CRUD (délégué au core) ---
 
