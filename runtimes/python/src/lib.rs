@@ -267,6 +267,14 @@ impl api::Handler for PyHandler {
         Python::with_gil(|py| match call_py_handler(py, &self.func, req) {
             Ok(body) => api::Response { status: 200, body },
             Err(e) => http_error_response(py, &e).unwrap_or_else(|| {
+                if e.is_instance_of::<pyo3::exceptions::PyValueError>(py)
+                    && e.to_string().contains("corps JSON invalide")
+                {
+                    return api::Response {
+                        status: 400,
+                        body: api::error_json("invalid_argument", "corps JSON invalide", None),
+                    };
+                }
                 tracing::error!(
                     target: "vignemale::app",
                     request_id = %request_id,
@@ -275,10 +283,11 @@ impl api::Handler for PyHandler {
                 );
                 api::Response {
                     status: 500,
-                    body: format!(
-                        r#"{{"error":"internal error","request_id":"{request_id}"}}"#
-                    )
-                    .into_bytes(),
+                    body: api::error_json(
+                        "internal",
+                        "internal error",
+                        Some(serde_json::json!({"request_id": request_id})),
+                    ),
                 }
             }),
         })
@@ -297,22 +306,48 @@ fn http_error_response(py: Python<'_>, e: &PyErr) -> Option<api::Response> {
     })
 }
 
-/// Appelle le handler Python : params de chemin en kwargs + `body` (JSON parsé),
-/// puis sérialise le retour en JSON.
-fn call_py_handler(py: Python<'_>, func: &Py<PyAny>, req: api::Request) -> PyResult<Vec<u8>> {
-    let json = py.import_bound("json")?;
+/// Construit les kwargs communs : params de chemin, `query` (dict), `headers`
+/// (dict, noms en minuscules) et `body` (JSON parsé) si présent. Le SDK filtre
+/// ensuite selon la signature du handler.
+fn build_kwargs<'py>(
+    py: Python<'py>,
+    req: &api::Request,
+) -> PyResult<pyo3::Bound<'py, PyDict>> {
     let kwargs = PyDict::new_bound(py);
     for (k, v) in &req.params {
         kwargs.set_item(k, v)?;
     }
+    let query = PyDict::new_bound(py);
+    for (k, v) in &req.query {
+        query.set_item(k, v)?;
+    }
+    kwargs.set_item("query", query)?;
+    let headers = PyDict::new_bound(py);
+    for (k, v) in &req.headers {
+        headers.set_item(k, v)?;
+    }
+    kwargs.set_item("headers", headers)?;
     if !req.body.is_empty() {
-        let body_str = std::str::from_utf8(&req.body)
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-        let parsed = json.call_method1("loads", (body_str,))?;
+        let invalid =
+            || pyo3::exceptions::PyValueError::new_err("corps JSON invalide");
+        let body_str = std::str::from_utf8(&req.body).map_err(|_| invalid())?;
+        let parsed = py
+            .import_bound("json")?
+            .call_method1("loads", (body_str,))
+            .map_err(|_| invalid())?;
         kwargs.set_item("body", parsed)?;
     }
+    Ok(kwargs)
+}
+
+/// Appelle le handler Python puis sérialise le retour en JSON.
+fn call_py_handler(py: Python<'_>, func: &Py<PyAny>, req: api::Request) -> PyResult<Vec<u8>> {
+    let kwargs = build_kwargs(py, &req)?;
     let result = func.bind(py).call((), Some(&kwargs))?;
-    let dumped: String = json.call_method1("dumps", (result,))?.extract()?;
+    let dumped: String = py
+        .import_bound("json")?
+        .call_method1("dumps", (result,))?
+        .extract()?;
     Ok(dumped.into_bytes())
 }
 
@@ -357,16 +392,7 @@ fn call_py_stream_handler(
     req: api::Request,
     sink: api::StreamSink,
 ) -> PyResult<()> {
-    let kwargs = PyDict::new_bound(py);
-    for (k, v) in &req.params {
-        kwargs.set_item(k, v)?;
-    }
-    if !req.body.is_empty() {
-        let json = py.import_bound("json")?;
-        let body_str = std::str::from_utf8(&req.body)
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-        kwargs.set_item("body", json.call_method1("loads", (body_str,))?)?;
-    }
+    let kwargs = build_kwargs(py, &req)?;
     let py_sink = Py::new(py, PyStreamSink { sink })?;
     kwargs.set_item("stream", py_sink)?;
     func.bind(py).call((), Some(&kwargs))?;

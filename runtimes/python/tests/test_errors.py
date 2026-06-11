@@ -39,17 +39,32 @@ def test_typed_body_validated(assistant):
     assert reply["lang"] == "fr"  # défaut Pydantic appliqué
 
 
-def test_missing_field_is_422(assistant):
+def test_missing_field_is_invalid_argument(assistant):
     status, body = request(assistant, "/ask", {"lang": "fr"})
-    assert status == 422
-    assert body["detail"][0]["type"] == "missing"
-    assert body["detail"][0]["loc"] == ["question"]
+    assert status == 400
+    assert body["code"] == "invalid_argument"
+    assert body["details"][0]["type"] == "missing"
+    assert body["details"][0]["loc"] == ["question"]
+
+
+def test_missing_body_is_invalid_argument(assistant):
+    import json as _json
+    import urllib.error
+    import urllib.request
+
+    req = urllib.request.Request(f"http://{assistant}/ask", method="POST")
+    try:
+        urllib.request.urlopen(req, timeout=5)
+        assert False, "un body requis manquant doit être rejeté"
+    except urllib.error.HTTPError as e:
+        assert e.code == 400
+        assert _json.loads(e.read())["code"] == "invalid_argument"
 
 
 def test_http_error_is_404(assistant):
     status, body = request(assistant, "/notes/999")
     assert status == 404
-    assert body == {"detail": "note 999 introuvable"}
+    assert body == {"code": "not_found", "message": "note 999 introuvable", "details": None}
 
 
 def test_streaming(assistant):

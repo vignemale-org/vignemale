@@ -51,14 +51,14 @@ def test_request_id_header_and_log_line(hello):
 def test_startup_log(hello):
     logs = logs_of(hello)
     (line,) = [l for l in logs if l.get("message") == "serveur démarré"]
-    assert line["endpoints"] == 5
+    assert line["endpoints"] == 7
 
 
 def test_unhandled_exception_500_with_request_id(hello):
     status, body = request(hello.addr, "/boom")
     assert status == 500
-    assert body["error"] == "internal error"
-    rid = body["request_id"]
+    assert body["code"] == "internal"
+    rid = body["details"]["request_id"]
 
     logs = logs_of(hello)
     # deux lignes ERROR corrélées par le request_id : le traceback (app)…

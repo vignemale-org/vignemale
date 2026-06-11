@@ -21,6 +21,16 @@ def echo(body):
     return {"you_sent": body}
 
 
+@api(method="GET", path="/search")
+def search(query):
+    return {"q": query.get("q"), "limit": query.get("limit", "10")}
+
+
+@api(method="GET", path="/whoami")
+def whoami(headers):
+    return {"client": headers.get("x-client", "inconnu")}
+
+
 @api(method="GET", path="/boom")
 def boom():
     raise ValueError("explosion contrôlée")
