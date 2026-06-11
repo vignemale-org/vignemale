@@ -1,0 +1,109 @@
+{
+  "modulePath": "shop",
+  "decls": [
+    {
+      "id": 1,
+      "name": "Item",
+      "type": {
+        "struct": {
+          "fields": [
+            {
+              "typ": {
+                "builtin": "INT64"
+              },
+              "name": "id"
+            },
+            {
+              "typ": {
+                "builtin": "STRING"
+              },
+              "name": "name"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": 2,
+      "name": "Order",
+      "type": {
+        "struct": {
+          "fields": [
+            {
+              "typ": {
+                "builtin": "INT64"
+              },
+              "name": "item_id"
+            },
+            {
+              "typ": {
+                "builtin": "INT64"
+              },
+              "name": "qty",
+              "optional": true
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "svcs": [
+    {
+      "name": "catalog",
+      "relPath": ".",
+      "rpcs": [
+        {
+          "name": "get_item",
+          "serviceName": "catalog",
+          "accessType": "PUBLIC",
+          "responseSchema": {
+            "named": {
+              "id": 1
+            }
+          },
+          "path": {
+            "segments": [
+              {
+                "value": "items"
+              },
+              {
+                "type": "PARAM",
+                "value": "id"
+              }
+            ]
+          },
+          "httpMethods": [
+            "GET"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "orders",
+      "relPath": ".",
+      "rpcs": [
+        {
+          "name": "create_order",
+          "serviceName": "orders",
+          "accessType": "PUBLIC",
+          "requestSchema": {
+            "named": {
+              "id": 2
+            }
+          },
+          "path": {
+            "segments": [
+              {
+                "value": "orders"
+              }
+            ]
+          },
+          "httpMethods": [
+            "POST"
+          ]
+        }
+      ]
+    }
+  ],
+  "language": "PYTHON"
+}

@@ -1,0 +1,7 @@
+# Vignemale — Infrastructure from Code pour agents IA (structure miroir d'Encore).
+# Le cœur = runtimes/core (Rust), à PORTER depuis encore/runtimes/core.
+[workspace]
+resolver = "2"
+members = ["runtimes/core", "runtimes/python"]
+# `cargo build` (sans args) ne build que le core ; le binding Python se build via maturin.
+default-members = ["runtimes/core"]

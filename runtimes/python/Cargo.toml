@@ -1,0 +1,17 @@
+[package]
+name = "vignemale-python-runtime"
+version = "0.1.0"
+edition = "2021"
+
+# Binding PyO3 (miroir de runtimes/js d'Encore, en NAPI). Produit l'extension
+# Python `vignemale._core`.
+[lib]
+name = "_core"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.22", features = ["abi3-py39", "extension-module"] }
+vignemale-runtime-core = { path = "../core" }
+prost = "0.12"
+base64 = "0.21"
+tokio = { version = "1", features = ["rt-multi-thread"] }

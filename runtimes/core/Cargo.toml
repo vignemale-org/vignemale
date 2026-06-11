@@ -1,0 +1,26 @@
+[package]
+name = "vignemale-runtime-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Types proto (binaire), comme Encore. Versions alignées sur Encore.
+prost = "0.12"
+prost-types = "0.12"
+anyhow = "1.0"
+base64 = "0.21"
+flate2 = "1.0"
+gjson = "0.8.1"
+# Provider Object Storage (S3-compatible → Scaleway / MinIO / AWS). Versions Encore.
+aws-config = "1.1.10"
+aws-sdk-s3 = "1.58"
+aws-credential-types = "1.2"
+tokio = { version = "1", features = ["sync", "net", "rt", "macros"] }
+# Serveur HTTP — même stack qu'Encore (axum 0.7 + hyper 1, en transitif).
+axum = "0.7"
+tokio-stream = "0.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0", features = ["raw_value"] }
+
+[build-dependencies]
+prost-build = "0.12"

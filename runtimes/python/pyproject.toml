@@ -1,0 +1,26 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "vignemale"
+version = "0.1.0"
+description = "Vignemale — déploie tes agents IA en production sur Scaleway, depuis Python."
+requires-python = ">=3.9"
+dependencies = [
+    "pydantic>=2",      # validation des @api typés
+    "griffe>=1.0",      # extraction statique (collect)
+    "protobuf>=5",      # émission du meta.proto (protojson)
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+vignemale = "vignemale.cli:main"
+
+[tool.maturin]
+# Projet mixte : code Python sous python/, extension Rust = vignemale._core
+python-source = "python"
+module-name = "vignemale._core"
+features = ["pyo3/extension-module"]

@@ -1,0 +1,33 @@
+"""Vignemale — SDK Python (binding du cœur Rust).
+
+Déploie tes agents IA en production sur Scaleway, depuis Python.
+Pour l'instant : expose le chargement de config du core (testable au fil de l'eau).
+"""
+
+from vignemale._core import (
+    version,
+    encode_demo_config,
+    parse_runtime_config_b64,
+    load_config_from_env,
+    resolve_env_secret,
+    resolve_b64_secret,
+    resolve_json_key_secret,
+    s3_roundtrip,
+)
+from vignemale.api import api, serve, HTTPError
+from vignemale.service import Service
+
+__all__ = [
+    "version",
+    "encode_demo_config",
+    "parse_runtime_config_b64",
+    "load_config_from_env",
+    "resolve_env_secret",
+    "resolve_b64_secret",
+    "resolve_json_key_secret",
+    "s3_roundtrip",
+    "api",
+    "serve",
+    "HTTPError",
+    "Service",
+]
