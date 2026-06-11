@@ -51,22 +51,48 @@ def _load_app(path: str) -> None:
         raise SystemExit(f"introuvable: {path}")
 
 
-def cmd_run(args):
-    # Infrastructure-from-Code : on lit les ressources déclarées (statiquement,
-    # sans exécuter l'app) et on provisionne le local AVANT d'importer le code.
+def _provision(path: str) -> None:
+    """Provisionne l'infra locale déclarée par l'app (statiquement, sans l'exécuter)."""
     from vignemale.collect import extract_path
 
-    extracted, _ = extract_path(args.path)
+    extracted, _ = extract_path(path)
     databases = extracted.get("databases") or []
     if databases:
         from vignemale import devinfra
 
         devinfra.provision_local(databases)
 
+
+def cmd_run(args):
+    # Infrastructure-from-Code : on lit les ressources déclarées et on
+    # provisionne le local AVANT d'importer le code.
+    _provision(args.path)
     _load_app(args.path)
     from vignemale.api import serve
 
     serve(args.addr)
+
+
+def cmd_rgpd(args):
+    import json as _json
+
+    from vignemale import rgpd
+
+    if args.action == "map":
+        _load_app(args.path)  # la carte est pure métadonnée : pas besoin de DB
+        print(_json.dumps(rgpd.data_map(), indent=2, ensure_ascii=False))
+        return
+
+    if args.subject is None:
+        raise SystemExit("vignemale rgpd: --subject est requis pour export/forget")
+    _provision(args.path)
+    _load_app(args.path)
+    subject = int(args.subject) if args.subject.isdigit() else args.subject
+    if args.action == "export":
+        print(_json.dumps(rgpd.export_subject(subject), indent=2, ensure_ascii=False))
+    elif args.action == "forget":
+        report = rgpd.forget_subject(subject, dry_run=args.dry_run)
+        print(_json.dumps(report, indent=2, ensure_ascii=False))
 
 
 def cmd_check(args):
@@ -101,6 +127,17 @@ def main(argv=None):
     p_check.add_argument("path", help="fichier ou dossier de l'app")
     p_check.add_argument("--raw", action="store_true", help="dict intermédiaire au lieu du meta.proto")
     p_check.set_defaults(func=cmd_check)
+
+    p_rgpd = sub.add_parser(
+        "rgpd", help="données personnelles : map (carte) · export · forget"
+    )
+    p_rgpd.add_argument("action", choices=["map", "export", "forget"])
+    p_rgpd.add_argument("path", help="fichier ou dossier de l'app")
+    p_rgpd.add_argument("--subject", help="identifiant de la personne (export/forget)")
+    p_rgpd.add_argument(
+        "--dry-run", action="store_true", help="forget : montre sans effacer"
+    )
+    p_rgpd.set_defaults(func=cmd_rgpd)
 
     args = parser.parse_args(argv)
     args.func(args)

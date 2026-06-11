@@ -60,13 +60,22 @@ def _extract_module(mod) -> tuple:
         if kind == "class" and _is_pydantic(m):
             fields = {}
             for attr_name, attr in m.members.items():
-                if attr.kind.value == "attribute":
+                if attr.kind.value == "attribute" and not attr_name.startswith("_"):
                     fields[attr_name] = {
                         "type": str(attr.annotation) if attr.annotation is not None else None,
                         "required": attr.value is None,
                         "default": _lit(attr.value),
                     }
             models[name] = fields
+
+        elif kind == "class":
+            # table vignemale.datamodel (classe avec `__database__ = "…"`) :
+            # la base déclarée pilote le provisioning, comme SQLDatabase(...)
+            dbattr = m.members.get("__database__")
+            if dbattr is not None and dbattr.kind.value == "attribute":
+                dbname = _lit(dbattr.value)
+                if isinstance(dbname, str) and dbname and dbname not in databases:
+                    databases.append(dbname)
 
         elif kind == "attribute" and m.value is not None and type(m.value).__name__ == "ExprCall":
             fn = str(m.value.function)

@@ -1,26 +1,28 @@
-"""Comptes utilisateurs : inscription, profil, et L'auth handler de l'app
-(branché sur la base — le token est vérifié en SQL à chaque requête)."""
+"""Comptes utilisateurs : inscription, profil, et L'auth handler de l'app.
+
+Zéro SQL : la table est déclarée en Pydantic (`vignemale.model.Table`), créée
+automatiquement, et les champs personnels sont tagués `PII` → `vignemale rgpd
+map/export/forget` savent quoi cartographier, exporter, effacer.
+"""
 
 import secrets
+from typing import Optional
 
 from pydantic import BaseModel
 
-from vignemale import APIError, SQLDatabase, api, auth_handler, log
+from vignemale import APIError, api, auth_handler, log
+from vignemale.datamodel import PII, Table
 
-db = SQLDatabase("users")
 
-db.execute(
-    """
-    CREATE TABLE IF NOT EXISTS users (
-        id         BIGSERIAL PRIMARY KEY,
-        email      TEXT NOT NULL UNIQUE,
-        name       TEXT NOT NULL,
-        token      TEXT NOT NULL UNIQUE,
-        plan       TEXT NOT NULL DEFAULT 'free',
-        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-    )
-    """
-)
+class User(Table):
+    __database__ = "users"
+    __subject__ = "id"  # cette table EST la personne
+
+    id: Optional[int] = None
+    email: str = PII(purpose="compte et contact")
+    name: str = PII(purpose="personnalisation")
+    token: str = PII(purpose="authentification")
+    plan: str = "free"
 
 
 class Signup(BaseModel):
@@ -31,29 +33,23 @@ class Signup(BaseModel):
 @auth_handler
 def check_token(token):
     """Le token (Bearer ou ?token=) est résolu en base → données d'auth."""
-    row = db.query_row(
-        "SELECT id, email, name, plan FROM users WHERE token = $1", token
-    )
-    if row is None:
+    user = User.find_one(token=token)
+    if user is None:
         return None  # → 401
-    return {"user_id": row["id"], "email": row["email"], "name": row["name"], "plan": row["plan"]}
+    return {"user_id": user.id, "email": user.email, "name": user.name, "plan": user.plan}
 
 
 @api(method="POST", path="/signup")
 def signup(body: Signup) -> dict:
     if "@" not in body.email:
         raise APIError.invalid_argument(f"email invalide : {body.email!r}")
-    if db.query_row("SELECT 1 FROM users WHERE email = $1", body.email):
+    if User.find_one(email=body.email):
         raise APIError.already_exists(f"un compte existe déjà pour {body.email}")
-    token = "vgm-" + secrets.token_hex(16)
-    row = db.query_row(
-        "INSERT INTO users (email, name, token) VALUES ($1, $2, $3) RETURNING id, plan",
-        body.email,
-        body.name,
-        token,
+    user = User.create(
+        email=body.email, name=body.name, token="vgm-" + secrets.token_hex(16)
     )
-    log.info("compte créé", user_id=row["id"], email=body.email)
-    return {"user_id": row["id"], "name": body.name, "plan": row["plan"], "token": token}
+    log.info("compte créé", user_id=user.id, email=user.email)
+    return {"user_id": user.id, "name": user.name, "plan": user.plan, "token": user.token}
 
 
 @api(method="GET", path="/me", auth=True)
@@ -64,7 +60,7 @@ def me(auth) -> dict:
 @api(method="GET", path="/users/:id", auth=True)
 def get_user(id) -> dict:
     """Profil d'un utilisateur — consommé par le service `chat` via client."""
-    row = db.query_row("SELECT id, name, plan FROM users WHERE id = $1", int(id))
-    if row is None:
+    user = User.get(int(id))
+    if user is None:
         raise APIError.not_found(f"utilisateur {id} inconnu")
-    return row
+    return {"id": user.id, "name": user.name, "plan": user.plan}

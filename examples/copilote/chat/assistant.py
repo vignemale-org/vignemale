@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from vignemale import api, log
 from vignemale.clients import users
 
-from .conversations import db, owned_conversation
+from .conversations import Message, owned_conversation
 
 
 class UserMessage(BaseModel):
@@ -39,10 +39,8 @@ def chat_in_conversation(stream, id, auth, body: UserMessage = None):
     conv = owned_conversation(int(id), auth["user_id"])
     message = body.message if body else "…"
 
-    db.execute(
-        "INSERT INTO messages (conversation_id, role, content) VALUES ($1, 'user', $2)",
-        conv["id"],
-        message,
+    Message.create(
+        conversation_id=conv.id, user_id=auth["user_id"], role="user", content=message
     )
 
     # appel inter-services : le profil vient du service `users`
@@ -53,15 +51,15 @@ def chat_in_conversation(stream, id, auth, body: UserMessage = None):
         stream.write(word + " ")
         time.sleep(0.03)
 
-    full_reply = " ".join(tokens)
-    db.execute(
-        "INSERT INTO messages (conversation_id, role, content) VALUES ($1, 'assistant', $2)",
-        conv["id"],
-        full_reply,
+    Message.create(
+        conversation_id=conv.id,
+        user_id=auth["user_id"],
+        role="assistant",
+        content=" ".join(tokens),
     )
     log.info(
         "réponse générée",
-        conversation_id=conv["id"],
+        conversation_id=conv.id,
         user_id=auth["user_id"],
         tokens=len(tokens),
     )

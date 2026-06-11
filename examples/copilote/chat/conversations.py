@@ -1,80 +1,76 @@
-"""Conversations : création, liste, lecture — tout est en base, tout est à toi."""
+"""Conversations : modèles déclarés, tables automatiques, zéro SQL.
+
+Le contenu des échanges est une donnée personnelle (`PII`), rattachée à la
+personne via `__subject__` : le droit à l'oubli traverse les services.
+"""
+
+from typing import Optional
 
 from pydantic import BaseModel
 
-from vignemale import APIError, SQLDatabase, api, log
+from vignemale import APIError, api, log
+from vignemale.datamodel import PII, Table
 
-db = SQLDatabase("chat")
 
-db.execute(
-    """
-    CREATE TABLE IF NOT EXISTS conversations (
-        id         BIGSERIAL PRIMARY KEY,
-        user_id    BIGINT NOT NULL,
-        title      TEXT NOT NULL,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-    )
-    """
-)
-db.execute(
-    """
-    CREATE TABLE IF NOT EXISTS messages (
-        id              BIGSERIAL PRIMARY KEY,
-        conversation_id BIGINT NOT NULL REFERENCES conversations(id),
-        role            TEXT NOT NULL,
-        content         TEXT NOT NULL,
-        created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
-    )
-    """
-)
+class Conversation(Table):
+    __database__ = "chat"
+    __subject__ = "user_id"
+
+    id: Optional[int] = None
+    user_id: int
+    title: str = PII(purpose="contenu des échanges")
+
+
+class Message(Table):
+    __database__ = "chat"
+    __subject__ = "user_id"
+    __on_forget__ = "anonymize"  # la ligne reste (stats), le contenu est caviardé
+
+    id: Optional[int] = None
+    conversation_id: int
+    user_id: int
+    role: str
+    content: str = PII(purpose="contenu des échanges")
 
 
 class NewConversation(BaseModel):
     title: str
 
 
-def owned_conversation(conversation_id: int, user_id) -> dict:
+def owned_conversation(conversation_id: int, user_id) -> Conversation:
     """La conversation, si elle appartient bien à l'utilisateur."""
-    row = db.query_row("SELECT * FROM conversations WHERE id = $1", conversation_id)
-    if row is None:
+    conv = Conversation.get(conversation_id)
+    if conv is None:
         raise APIError.not_found(f"conversation {conversation_id} introuvable")
-    if row["user_id"] != user_id:
+    if conv.user_id != user_id:
         raise APIError.permission_denied("cette conversation ne t'appartient pas")
-    return row
+    return conv
 
 
 @api(method="POST", path="/conversations", auth=True)
 def create_conversation(body: NewConversation, auth) -> dict:
-    row = db.query_row(
-        "INSERT INTO conversations (user_id, title) VALUES ($1, $2) RETURNING id, title",
-        auth["user_id"],
-        body.title,
-    )
-    log.info("conversation créée", conversation_id=row["id"], user_id=auth["user_id"])
-    return row
+    conv = Conversation.create(user_id=auth["user_id"], title=body.title)
+    log.info("conversation créée", conversation_id=conv.id, user_id=auth["user_id"])
+    return {"id": conv.id, "title": conv.title}
 
 
 @api(method="GET", path="/conversations", auth=True)
 def list_conversations(auth) -> dict:
-    rows = db.query(
-        """
-        SELECT c.id, c.title, count(m.id) AS messages
-        FROM conversations c
-        LEFT JOIN messages m ON m.conversation_id = c.id
-        WHERE c.user_id = $1
-        GROUP BY c.id, c.title
-        ORDER BY c.id
-        """,
-        auth["user_id"],
-    )
-    return {"conversations": rows}
+    convs = Conversation.find(user_id=auth["user_id"])
+    return {
+        "conversations": [
+            {"id": c.id, "title": c.title, "messages": Message.count(conversation_id=c.id)}
+            for c in convs
+        ]
+    }
 
 
 @api(method="GET", path="/conversations/:id", auth=True)
 def get_conversation(id, auth) -> dict:
     conv = owned_conversation(int(id), auth["user_id"])
-    messages = db.query(
-        "SELECT role, content FROM messages WHERE conversation_id = $1 ORDER BY id",
-        int(id),
-    )
-    return {"id": conv["id"], "title": conv["title"], "messages": messages}
+    messages = Message.find(conversation_id=conv.id)
+    return {
+        "id": conv.id,
+        "title": conv.title,
+        "messages": [{"role": m.role, "content": m.content} for m in messages],
+    }
