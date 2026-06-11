@@ -1,10 +1,8 @@
-"""Service `catalog` — un module = un service (façon Encore)."""
+"""Endpoints « items » du service catalog."""
 
 from pydantic import BaseModel
 
-from vignemale import Service, api
-
-catalog = Service("catalog")
+from vignemale import api
 
 
 class Item(BaseModel):

@@ -1,12 +1,10 @@
-"""Service `orders` — appelle `catalog` comme un client (direct en local,
-HTTP signé une fois déployé : même code)."""
+"""Création de commandes — appelle `catalog` comme un client (direct en
+local, HTTP signé une fois déployé : même code)."""
 
 from pydantic import BaseModel
 
-from vignemale import Service, api
+from vignemale import api
 from vignemale.clients import catalog
-
-orders = Service("orders")
 
 
 class Order(BaseModel):

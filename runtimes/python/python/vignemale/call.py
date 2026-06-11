@@ -51,10 +51,17 @@ def call(service: str, endpoint: str, body=None, **params):
 
 def _call_local(service: str, endpoint: str, body, params):
     modules = [m for (n, m) in _service_mod._services if n == service]
+
+    def in_service(module: str) -> bool:
+        # le module de l'endpoint = celui du Service, ou un sous-module
+        # (dossier-service : Service("catalog") dans catalog/__init__.py,
+        # endpoints dans catalog/items.py → module "catalog.items")
+        return any(module == m or module.startswith(m + ".") for m in modules)
+
     for name, _method, _path, wrapper, stream, *_rest in _endpoints:
         if name != endpoint:
             continue
-        if modules and wrapper.__module__ not in modules:
+        if modules and not in_service(wrapper.__module__):
             continue
         if stream:
             raise APIError(

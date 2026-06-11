@@ -3,9 +3,14 @@
     vignemale run app.py            # un fichier
     vignemale run ./monapp          # un dossier (multi-service)
     vignemale check app.py|dossier  # extrait le graphe meta (statique, sans exécuter)
+
+Dans un dossier d'app, un service est soit un **fichier** `monservice.py`,
+soit un **dossier** `monservice/` (package : `__init__.py` déclare le
+`Service`, les endpoints vivent dans ses modules) — façon Encore.
 """
 
 import argparse
+import importlib
 import importlib.util
 import os
 import sys
@@ -18,13 +23,27 @@ def _load_file(path: str) -> None:
     spec.loader.exec_module(mod)  # exécute les @api / Service → enregistre
 
 
+def _load_package(pkg: str, dirpath: str) -> None:
+    importlib.import_module(pkg)  # exécute __init__.py (Service(...))
+    for f in sorted(os.listdir(dirpath)):
+        if f.endswith(".py") and not f.startswith("_"):
+            importlib.import_module(f"{pkg}.{f[:-3]}")
+
+
+def _is_service_dir(path: str) -> bool:
+    return os.path.isdir(path) and os.path.isfile(os.path.join(path, "__init__.py"))
+
+
 def _load_app(path: str) -> None:
     path = os.path.abspath(path)
     if os.path.isdir(path):
         sys.path.insert(0, path)
         for f in sorted(os.listdir(path)):
+            full = os.path.join(path, f)
             if f.endswith(".py") and not f.startswith("_"):
-                _load_file(os.path.join(path, f))
+                _load_file(full)
+            elif not f.startswith(("_", ".")) and _is_service_dir(full):
+                _load_package(f, full)
     elif os.path.isfile(path):
         sys.path.insert(0, os.path.dirname(path))
         _load_file(path)

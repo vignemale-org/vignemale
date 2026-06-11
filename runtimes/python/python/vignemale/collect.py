@@ -37,7 +37,8 @@ def _is_pydantic(cls) -> bool:
 
 
 def _extract_module(mod) -> tuple:
-    """Renvoie (service, endpoints, models, databases, auth_handler) pour un module griffe."""
+    """Renvoie (service, endpoints, models, databases, auth_handler) pour un
+    module griffe — récursif : un package (dossier-service) agrège ses sous-modules."""
     service = None
     models = {}
     endpoints = []
@@ -46,6 +47,15 @@ def _extract_module(mod) -> tuple:
 
     for name, m in mod.members.items():
         kind = m.kind.value
+
+        if kind == "module":  # sous-module d'un dossier-service
+            svc2, eps2, mods2, dbs2, auth2 = _extract_module(m)
+            service = service or svc2
+            endpoints.extend(eps2)
+            models.update(mods2)
+            databases.extend(db for db in dbs2 if db not in databases)
+            auth_fn = auth_fn or auth2
+            continue
 
         if kind == "class" and _is_pydantic(m):
             fields = {}
@@ -114,15 +124,24 @@ def extract_path(path: str) -> tuple[dict, str]:
 
     if os.path.isdir(path):
         app_name = os.path.basename(path)
-        files = [f for f in sorted(os.listdir(path)) if f.endswith(".py") and not f.startswith("_")]
+        modnames = []
+        for f in sorted(os.listdir(path)):
+            full = os.path.join(path, f)
+            if f.endswith(".py") and not f.startswith("_"):
+                modnames.append(f[:-3])
+            elif (
+                os.path.isdir(full)
+                and not f.startswith(("_", "."))
+                and os.path.isfile(os.path.join(full, "__init__.py"))
+            ):
+                modnames.append(f)  # dossier-service (package)
     else:
         app_name = os.path.splitext(os.path.basename(path))[0]
-        files = [os.path.basename(path)]
+        modnames = [app_name]
         path = os.path.dirname(path)
 
     auth_handler = None
-    for f in files:
-        modname = f[:-3]
+    for modname in modnames:
         mod = griffe.load(modname, search_paths=[path])
         svc, eps, mods, dbs, auth_fn = _extract_module(mod)
         if eps or svc:
