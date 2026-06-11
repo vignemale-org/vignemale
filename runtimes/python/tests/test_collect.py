@@ -57,3 +57,19 @@ def test_stream_flag_extracted():
     eps = {e["name"]: e for e in svc["endpoints"]}
     assert eps["chat"]["stream"] is True
     assert eps["ask"]["stream"] is False
+
+
+def test_sql_database_extracted():
+    """`SQLDatabase("todo")` est détectée statiquement (c'est elle qui pilote
+    le provisioning local de `vignemale run`)."""
+    extracted, _ = extract_path(os.path.join(EXAMPLES, "todo.py"))
+    assert extracted["databases"] == ["todo"]
+    (svc,) = extracted["services"]
+    assert svc["databases"] == ["todo"]
+
+
+def test_sql_database_in_meta():
+    got = meta_json(os.path.join(EXAMPLES, "todo.py"))
+    assert got["sqlDatabases"] == [{"name": "todo"}]
+    (svc,) = got["svcs"]
+    assert svc["databases"] == ["todo"]

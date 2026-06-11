@@ -1,15 +1,17 @@
 """Exemple « vrai projet » : une API todo avec Postgres, logs structurés et erreurs.
 
-Tout Vignemale en un fichier : `SQLDatabase` (le code déclare la base,
-l'environnement fournit le DSN), `@api` typé Pydantic, `HTTPError`, `log`.
+Tout Vignemale en un fichier : `SQLDatabase` (le code DÉCLARE la base — au
+`run`, Vignemale provisionne le Postgres local tout seul), `@api` typé
+Pydantic, `HTTPError`, `log`. Zéro configuration :
 
-    docker run -d --name vignemale-pg -p 5433:5432 -e POSTGRES_PASSWORD=vignemale postgres:16
-    export VIGNEMALE_SQLDB_TODO=postgres://postgres:vignemale@127.0.0.1:5433/postgres
-    vignemale run examples/todo.py
+    vignemale run examples/todo.py      # docker + base + DSN : automatique
 
     curl -X POST 127.0.0.1:8080/todos -d '{"title":"acheter du pain"}'
     curl 127.0.0.1:8080/todos
     curl -X POST 127.0.0.1:8080/todos/1/done
+
+(En prod, le même code pointera vers une base managée : le DSN posé dans
+l'environnement — VIGNEMALE_SQLDB_TODO — a priorité sur le local.)
 """
 
 from pydantic import BaseModel

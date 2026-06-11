@@ -37,10 +37,11 @@ def _is_pydantic(cls) -> bool:
 
 
 def _extract_module(mod) -> tuple:
-    """Renvoie (service_name | None, endpoints, models) pour un module griffe."""
+    """Renvoie (service_name | None, endpoints, models, databases) pour un module griffe."""
     service = None
     models = {}
     endpoints = []
+    databases = []
 
     for name, m in mod.members.items():
         kind = m.kind.value
@@ -58,11 +59,15 @@ def _extract_module(mod) -> tuple:
 
         elif kind == "attribute" and m.value is not None and type(m.value).__name__ == "ExprCall":
             fn = str(m.value.function)
+            first_arg = next(
+                (_lit(a) for a in m.value.arguments if type(a).__name__ != "ExprKeyword"),
+                None,
+            )
             if fn == "Service" or fn.endswith(".Service"):
-                for a in m.value.arguments:
-                    if type(a).__name__ != "ExprKeyword":
-                        service = _lit(a)
-                        break
+                service = first_arg
+            elif fn == "SQLDatabase" or fn.endswith(".SQLDatabase"):
+                if first_arg:
+                    databases.append(first_arg)
 
         elif kind == "function":
             for deco in m.decorators:
@@ -91,7 +96,7 @@ def _extract_module(mod) -> tuple:
                     "response": str(m.returns) if m.returns is not None else None,
                 })
 
-    return service, endpoints, models
+    return service, endpoints, models, databases
 
 
 def extract_path(path: str) -> tuple[dict, str]:
@@ -99,6 +104,7 @@ def extract_path(path: str) -> tuple[dict, str]:
     path = os.path.abspath(path)
     services = []
     models = {}
+    databases = []
 
     if os.path.isdir(path):
         app_name = os.path.basename(path)
@@ -111,12 +117,13 @@ def extract_path(path: str) -> tuple[dict, str]:
     for f in files:
         modname = f[:-3]
         mod = griffe.load(modname, search_paths=[path])
-        svc, eps, mods = _extract_module(mod)
+        svc, eps, mods, dbs = _extract_module(mod)
         if eps or svc:
-            services.append({"name": svc or modname, "endpoints": eps})
+            services.append({"name": svc or modname, "endpoints": eps, "databases": dbs})
         models.update(mods)
+        databases.extend(db for db in dbs if db not in databases)
 
-    return {"services": services, "models": models}, app_name
+    return {"services": services, "models": models, "databases": databases}, app_name
 
 
 # ----- 2) dict -> vrai meta.proto (Data) -----
@@ -169,10 +176,15 @@ def build_meta(extracted: dict, app_name: str) -> "meta.Data":
             field.optional = not finfo["required"]
         decl_ids[mname] = i
 
+    for db_name in extracted.get("databases", []):
+        db = data.sql_databases.add()
+        db.name = db_name
+
     for svc_info in extracted["services"]:
         svc = data.svcs.add()
         svc.name = svc_info["name"]
         svc.rel_path = "."
+        svc.databases.extend(svc_info.get("databases", []))
         for ep in svc_info["endpoints"]:
             rpc = svc.rpcs.add()
             rpc.name = ep["name"]

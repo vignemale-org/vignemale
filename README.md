@@ -126,10 +126,19 @@ def create(body: NewTodo) -> Todo:
 ```
 
 ```bash
-docker run -d --name vignemale-pg -p 5433:5432 -e POSTGRES_PASSWORD=vignemale postgres:16
-export VIGNEMALE_SQLDB_TODO=postgres://postgres:vignemale@127.0.0.1:5433/postgres
 vignemale run examples/todo.py
+# vignemale: démarrage du Postgres local (docker)…
+# vignemale: base Postgres « todo » prête (docker local)
+# vignemale: 4 endpoint(s) sur http://127.0.0.1:8080
 ```
+
+**Zéro configuration** : `run` lit les ressources déclarées (statiquement, via
+`collect`) et provisionne le local AVANT d'importer l'app — un Postgres Docker
+partagé (`vignemale-postgres`, volume persistant), une database par
+`SQLDatabase("x")`, le DSN posé dans l'env. Si `VIGNEMALE_SQLDB_<NOM>` (ou
+`VIGNEMALE_SQLDB`) est déjà posé, il a priorité : même code, autre backend —
+c'est le provider switch. `vignemale check` liste aussi les bases déclarées
+(`sqlDatabases` dans le meta).
 
 **Observabilité incluse, sans rien configurer** :
 - chaque réponse porte un header `x-vignemale-request-id` ;

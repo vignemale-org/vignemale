@@ -33,6 +33,17 @@ def _load_app(path: str) -> None:
 
 
 def cmd_run(args):
+    # Infrastructure-from-Code : on lit les ressources déclarées (statiquement,
+    # sans exécuter l'app) et on provisionne le local AVANT d'importer le code.
+    from vignemale.collect import extract_path
+
+    extracted, _ = extract_path(args.path)
+    databases = extracted.get("databases") or []
+    if databases:
+        from vignemale import devinfra
+
+        devinfra.provision_local(databases)
+
     _load_app(args.path)
     from vignemale.api import serve
 
