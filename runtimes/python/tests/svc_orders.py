@@ -2,7 +2,8 @@
 
 from pydantic import BaseModel
 
-from vignemale import Service, api, auth_handler, call
+from vignemale import Service, api, auth_handler
+from vignemale.clients import catalog
 
 orders = Service("orders")
 
@@ -21,7 +22,7 @@ class Order(BaseModel):
 
 @api(method="POST", path="/orders", auth=True)
 def create_order(body: Order, auth) -> dict:
-    item = call("catalog", "get_item", id=body.item_id)
+    item = catalog.get_item(id=body.item_id)
     return {"created": True, "item": item, "by": auth["user_id"], "qty": body.qty}
 
 

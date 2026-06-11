@@ -50,6 +50,16 @@ def test_call_local(shop):
     assert body == {"created": True, "item": {"id": 7, "name": "widget"}, "qty": 3}
 
 
+def test_client_style_encore():
+    """`from vignemale.clients import x` → client dynamique, méthodes = endpoints."""
+    from vignemale.api import APIError
+    from vignemale.clients import catalog  # n'importe quel nom de service
+
+    assert repr(catalog) == "ServiceClient('catalog')"
+    with pytest.raises(APIError, match="introuvable"):
+        catalog.endpoint_inconnu(id=1)  # local, pas d'endpoint enregistré
+
+
 def test_call_local_endpoint_inconnu(shop):
     # call() vers un endpoint inexistant → not_found propre (500 interne car
     # levé DANS le handler ? non : APIError → statut porté)
