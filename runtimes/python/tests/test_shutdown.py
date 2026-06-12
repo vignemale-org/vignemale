@@ -16,7 +16,7 @@ def test_sigint_stops_server():
         [
             sys.executable,
             "-m",
-            "vignemale.cli",
+            "vignemale_cli",
             "run",
             os.path.join(EXAMPLES, "shop"),
             "--addr",

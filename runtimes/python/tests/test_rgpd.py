@@ -95,7 +95,7 @@ def test_export_et_oubli():
 def test_cli_rgpd_map_sur_copilote():
     """`vignemale rgpd map` : la carte des données de l'app, sans toucher la DB."""
     r = subprocess.run(
-        [sys.executable, "-m", "vignemale.cli", "rgpd", "map",
+        [sys.executable, "-m", "vignemale_cli", "rgpd", "map",
          os.path.join(EXAMPLES, "copilote")],
         capture_output=True,
         text=True,

@@ -45,7 +45,7 @@ def app():
     env["VIGNEMALE_SQLDB"] = PG or ""
     env["VIGNEMALE_RAG_MODEL"] = "test"  # TestModel pydantic-ai (CI hors-ligne)
     srv = Server(
-        [sys.executable, "-m", "vignemale.cli", "run",
+        [sys.executable, "-m", "vignemale_cli", "run",
          os.path.join(EXAMPLES, "corpus"), "--addr", addr],
         addr, env=env,
     )

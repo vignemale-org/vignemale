@@ -15,7 +15,7 @@ def shop_genere(tmp_path):
     app = tmp_path / "shop"
     shutil.copytree(f"{EXAMPLES}/shop", app)
     r = subprocess.run(
-        [sys.executable, "-m", "vignemale.cli", "gen", str(app)],
+        [sys.executable, "-m", "vignemale_cli", "gen", str(app)],
         capture_output=True, text=True, timeout=60,
     )
     assert r.returncode == 0, r.stderr

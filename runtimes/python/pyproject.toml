@@ -8,16 +8,11 @@ version = "0.1.0"
 description = "Vignemale — déploie tes agents IA en production sur Scaleway, depuis Python."
 requires-python = ">=3.9"
 dependencies = [
-    "pydantic>=2",      # validation des @api typés
-    "griffe>=1.0",      # extraction statique (collect)
-    "protobuf>=5",      # émission du meta.proto (protojson)
+    "pydantic>=2",      # validation des @api typés — l'UNIQUE dépendance prod
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pydantic-ai-slim[anthropic]>=1.0"]
-
-[project.scripts]
-vignemale = "vignemale.cli:main"
 
 [tool.maturin]
 # Projet mixte : code Python sous python/, extension Rust = vignemale._core

@@ -6,7 +6,7 @@ import os
 from google.protobuf import json_format
 
 from conftest import EXAMPLES, HERE
-from vignemale.collect import build_meta, extract_path
+from vignemale_cli.collect import build_meta, extract_path
 
 GOLDEN = os.path.join(HERE, "golden")
 

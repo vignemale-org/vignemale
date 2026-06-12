@@ -38,7 +38,7 @@ def app():
     env = {k: v for k, v in os.environ.items() if not k.startswith("VIGNEMALE_SQLDB")}
     env["VIGNEMALE_SQLDB"] = PG or ""  # les 2 bases pointent sur le PG de test
     srv = Server(
-        [sys.executable, "-m", "vignemale.cli", "run",
+        [sys.executable, "-m", "vignemale_cli", "run",
          os.path.join(EXAMPLES, "copilote"), "--addr", addr],
         addr,
         env=env,

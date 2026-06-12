@@ -18,7 +18,7 @@ import shutil
 import subprocess
 import time
 
-from . import _core
+from vignemale import _core
 
 CONTAINER = "vignemale-postgres"
 VOLUME = "vignemale-pg-data"

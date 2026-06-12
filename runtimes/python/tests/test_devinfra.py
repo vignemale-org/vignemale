@@ -36,7 +36,7 @@ def test_run_provisions_database_automatically():
         [
             sys.executable,
             "-m",
-            "vignemale.cli",
+            "vignemale_cli",
             "run",
             os.path.join(EXAMPLES, "todo.py"),
             "--addr",

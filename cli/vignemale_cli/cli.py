@@ -57,12 +57,12 @@ def _load_app(path: str) -> None:
 
 def _provision(path: str) -> None:
     """Provisionne l'infra locale déclarée par l'app (statiquement, sans l'exécuter)."""
-    from vignemale.collect import extract_path
+    from .collect import extract_path
 
     extracted, _ = extract_path(path)
     databases = extracted.get("databases") or []
     if databases:
-        from vignemale import devinfra
+        from . import devinfra
 
         devinfra.provision_local(databases)
 
@@ -78,7 +78,7 @@ def cmd_run(args):
 
 
 def cmd_gen(args):
-    from vignemale.gen import generate
+    from .gen import generate
 
     for f in generate(args.path):
         print(f"vignemale: écrit {f}")
@@ -112,7 +112,7 @@ def cmd_check(args):
 
     from google.protobuf import json_format
 
-    from vignemale.collect import build_meta, extract_path
+    from .collect import build_meta, extract_path
 
     extracted, app_name = extract_path(args.path)
     if args.raw:

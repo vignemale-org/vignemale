@@ -36,7 +36,7 @@ def post(addr, path, data, token=None):
 def shop():
     addr = f"127.0.0.1:{free_port()}"
     srv = Server(
-        [sys.executable, "-m", "vignemale.cli", "run", os.path.join(EXAMPLES, "shop"),
+        [sys.executable, "-m", "vignemale_cli", "run", os.path.join(EXAMPLES, "shop"),
          "--addr", addr],
         addr,
     )

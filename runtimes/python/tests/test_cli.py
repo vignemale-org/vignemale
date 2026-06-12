@@ -10,7 +10,7 @@ from conftest import EXAMPLES
 
 def run_cli(*args):
     return subprocess.run(
-        [sys.executable, "-m", "vignemale.cli", *args],
+        [sys.executable, "-m", "vignemale_cli", *args],
         capture_output=True,
         text=True,
         timeout=60,

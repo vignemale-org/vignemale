@@ -56,7 +56,7 @@ def test_prepare_valide_types_et_detecte_les_erreurs(monkeypatch):
 def test_cli_check_sql_ok_sur_boutique():
     env = dict(os.environ, VIGNEMALE_SQLDB=PG)
     r = subprocess.run(
-        [sys.executable, "-m", "vignemale.cli", "check", "--sql",
+        [sys.executable, "-m", "vignemale_cli", "check", "--sql",
          os.path.join(EXAMPLES, "boutique.py")],
         capture_output=True, text=True, timeout=120, env=env,
     )
@@ -69,7 +69,7 @@ def test_cli_check_sql_ok_sur_boutique():
 def test_cli_check_sql_echoue_sur_requete_cassee():
     env = dict(os.environ, VIGNEMALE_SQLDB=PG)
     r = subprocess.run(
-        [sys.executable, "-m", "vignemale.cli", "check", "--sql",
+        [sys.executable, "-m", "vignemale_cli", "check", "--sql",
          os.path.join(HERE, "app_sql_casse.py")],
         capture_output=True, text=True, timeout=120, env=env,
     )

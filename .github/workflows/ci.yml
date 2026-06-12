@@ -40,6 +40,9 @@ jobs:
         working-directory: runtimes/python
         run: PROTOC="$(which protoc)" pip install ".[dev]"
 
+      - name: Install CLI (package séparé)
+        run: pip install ./cli
+
       - name: Tests Python (pytest)
         working-directory: runtimes/python
         env:

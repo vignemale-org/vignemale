@@ -16,7 +16,7 @@ def assistant():
         [
             sys.executable,
             "-m",
-            "vignemale.cli",
+            "vignemale_cli",
             "run",
             os.path.join(EXAMPLES, "assistant.py"),
             "--addr",

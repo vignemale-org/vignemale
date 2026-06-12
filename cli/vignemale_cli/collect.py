@@ -4,9 +4,9 @@ Parse le source (décorateurs `@api`, `Service(...)`, annotations, modèles Pyda
 et construit le **vrai `meta.proto`** (`Data` : services · rpcs · decls), émis en
 protojson — le graphe canonique, diffable dans une PR.
 
-    python -m vignemale.collect ../../examples/typed.py       # un fichier
-    python -m vignemale.collect ../../examples/shop           # un dossier (multi-service)
-    python -m vignemale.collect ... --raw                     # dict intermédiaire
+    python -m vignemale_cli.collect ../../examples/typed.py       # un fichier
+    python -m vignemale_cli.collect ../../examples/shop           # un dossier (multi-service)
+    python -m vignemale_cli.collect ... --raw                     # dict intermédiaire
 """
 
 import ast
@@ -17,8 +17,8 @@ import sys
 import griffe
 from google.protobuf import json_format
 
-from vignemale.parser.meta.v1 import meta_pb2 as meta
-from vignemale.parser.schema.v1 import schema_pb2 as schema
+from vignemale_cli.parser.meta.v1 import meta_pb2 as meta
+from vignemale_cli.parser.schema.v1 import schema_pb2 as schema
 
 
 # ----- 1) extraction statique (griffe) -----
@@ -267,7 +267,7 @@ def build_meta(extracted: dict, app_name: str) -> "meta.Data":
 if __name__ == "__main__":
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     if len(args) != 1:
-        print("usage: python -m vignemale.collect <fichier.py|dossier> [--raw]", file=sys.stderr)
+        print("usage: python -m vignemale_cli.collect <fichier.py|dossier> [--raw]", file=sys.stderr)
         raise SystemExit(2)
 
     extracted, app_name = extract_path(args[0])
