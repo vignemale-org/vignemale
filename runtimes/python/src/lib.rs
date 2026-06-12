@@ -714,6 +714,57 @@ fn serve(
     }
 }
 
+/// Démarre la GATEWAY : route le trafic public par préfixe de path vers les
+/// services backend, authentifie à l'edge, forwarde signé. `routes` = liste de
+/// (prefix, service, upstream_url, requires_auth).
+#[pyfunction]
+#[pyo3(signature = (routes, addr, auth_handler=None))]
+fn serve_gateway(
+    py: Python<'_>,
+    routes: Vec<(String, String, String, bool)>,
+    addr: String,
+    auth_handler: Option<Py<PyAny>>,
+) -> PyResult<()> {
+    let socket: std::net::SocketAddr = addr
+        .parse()
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("adresse invalide: {e}")))?;
+    let gw_routes: Vec<api::GatewayRoute> = routes
+        .into_iter()
+        .map(|(prefix, service, upstream, requires_auth)| api::GatewayRoute {
+            prefix,
+            service,
+            upstream,
+            requires_auth,
+        })
+        .collect();
+    let auth: Option<Arc<dyn api::AuthHandler>> =
+        auth_handler.map(|func| Arc::new(PyAuthHandler { func }) as Arc<dyn api::AuthHandler>);
+
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let shutting_down = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let server_thread = std::thread::spawn(move || -> Result<(), String> {
+        let runtime = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
+        runtime
+            .block_on(api::gateway::serve(gw_routes, socket, auth, shutdown_rx, shutting_down))
+            .map_err(|e| e.to_string())
+    });
+    loop {
+        if server_thread.is_finished() {
+            return match server_thread.join() {
+                Ok(r) => r,
+                Err(_) => Err("gateway thread panicked".to_string()),
+            }
+            .map_err(pyo3::exceptions::PyRuntimeError::new_err);
+        }
+        py.allow_threads(|| std::thread::sleep(std::time::Duration::from_millis(100)));
+        if let Err(signal) = py.check_signals() {
+            let _ = shutdown_tx.send(true);
+            py.allow_threads(|| std::thread::sleep(std::time::Duration::from_millis(300)));
+            return Err(signal);
+        }
+    }
+}
+
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(version, m)?)?;
@@ -734,5 +785,6 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(sqldb_tx_commit, m)?)?;
     m.add_function(wrap_pyfunction!(sqldb_tx_rollback, m)?)?;
     m.add_function(wrap_pyfunction!(serve, m)?)?;
+    m.add_function(wrap_pyfunction!(serve_gateway, m)?)?;
     Ok(())
 }

@@ -120,6 +120,13 @@ fn extract_token(headers: &HeaderMap, query: &Option<String>) -> Option<String> 
 }
 
 /// Joue l'authentification pour un endpoint protégé. `Ok(json)` = autorisé.
+pub(crate) async fn run_auth_pub(
+    auth: &Option<Arc<dyn AuthHandler>>,
+    headers: &HeaderMap,
+    query: &Option<String>,
+) -> Result<Option<String>, Response> {
+    run_auth(auth, headers, query).await
+}
 async fn run_auth(
     auth: &Option<Arc<dyn AuthHandler>>,
     headers: &HeaderMap,
@@ -198,6 +205,7 @@ fn method_filter(method: &str) -> Option<MethodFilter> {
 
 /// Contexte de trace W3C : reprend le `traceparent` entrant s'il est valide,
 /// sinon en crée un. Renvoie (trace_id, traceparent).
+pub(crate) fn trace_context_pub(headers: &HeaderMap) -> (String, String) { trace_context(headers) }
 fn trace_context(headers: &HeaderMap) -> (String, String) {
     if let Some(tp) = headers.get("traceparent").and_then(|v| v.to_str().ok()) {
         let parts: Vec<&str> = tp.split('-').collect();
@@ -247,6 +255,7 @@ fn make_request(
 
 /// Couche CORS : tout ouvert par défaut (dev) ; `VIGNEMALE_CORS_ALLOW_ORIGINS`
 /// (liste d'origines séparées par des virgules, ou `*`) restreint en prod.
+pub(crate) fn cors_layer_pub() -> tower_http::cors::CorsLayer { cors_layer() }
 fn cors_layer() -> tower_http::cors::CorsLayer {
     use tower_http::cors::{Any, CorsLayer};
     let layer = CorsLayer::new()

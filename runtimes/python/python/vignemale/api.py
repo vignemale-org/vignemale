@@ -296,6 +296,23 @@ def _auth_adapter(token: str):
     return data
 
 
+def serve_gateway(routes: list, addr: str = "127.0.0.1:8080") -> None:
+    """Démarre la GATEWAY : l'entrée unique d'une app multi-services déployée.
+
+    `routes` : liste de (prefix, service, upstream_url, requires_auth). Le
+    trafic public est authentifié à l'edge (via le `@auth_handler` chargé) puis
+    forwardé en HTTP signé (svcauth) vers le bon service. Utilisé par
+    `vignemale gateway` ; le secret partagé vient de VIGNEMALE_SERVICE_SECRET.
+    """
+    print(f"vignemale: gateway sur http://{addr} ({len(routes)} service(s))", flush=True)
+    try:
+        _core.serve_gateway(
+            routes, addr, _auth_adapter if _auth_handler is not None else None
+        )
+    except KeyboardInterrupt:
+        print("vignemale: gateway arrêtée", flush=True)
+
+
 def serve(addr: str = "127.0.0.1:8080") -> None:
     """Démarre le serveur HTTP.
 

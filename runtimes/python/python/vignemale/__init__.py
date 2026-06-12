@@ -15,7 +15,9 @@ from vignemale._core import (
     s3_roundtrip,
 )
 from vignemale import log
-from vignemale.api import api, auth_handler, serve, static_files, APIError, HTTPError
+from vignemale.api import (
+    api, auth_handler, serve, serve_gateway, static_files, APIError, HTTPError,
+)
 from vignemale.call import call
 from vignemale.service import Service
 from vignemale.sqldb import SQLDatabase, SQLError
@@ -33,6 +35,7 @@ __all__ = [
     "auth_handler",
     "call",
     "serve",
+    "serve_gateway",
     "static_files",
     "APIError",
     "HTTPError",

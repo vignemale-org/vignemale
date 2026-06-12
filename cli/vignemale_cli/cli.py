@@ -77,6 +77,16 @@ def cmd_run(args):
     serve(args.addr)
 
 
+def cmd_gateway(args):
+    from .gateway import build_routes
+
+    routes = build_routes(args.path)
+    _load_app(args.path)  # charge l'app → l'auth handler est dispo à l'edge
+    from vignemale.api import serve_gateway
+
+    serve_gateway(routes, args.addr)
+
+
 def cmd_gen(args):
     from .gen import generate
 
@@ -173,6 +183,13 @@ def main(argv=None):
         help="valide les requêtes sql() par PREPARE Postgres (sans les exécuter)",
     )
     p_check.set_defaults(func=cmd_check)
+
+    p_gw = sub.add_parser(
+        "gateway", help="entrée unique multi-services : route + auth à l'edge"
+    )
+    p_gw.add_argument("path", help="dossier de l'app multi-services")
+    p_gw.add_argument("--addr", default="127.0.0.1:8080", help="adresse d'écoute")
+    p_gw.set_defaults(func=cmd_gateway)
 
     p_gen = sub.add_parser(
         "gen", help="génère les clients de services typés (vignemale_clients/)"
