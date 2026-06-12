@@ -618,7 +618,7 @@ fn call_py_stream_handler(
 /// `endpoints` = liste de (name, method, path, handler, stream, auth,
 /// timeout_s, body_limit).
 #[pyfunction]
-#[pyo3(signature = (endpoints, addr, auth_handler=None, statics=vec![]))]
+#[pyo3(signature = (endpoints, addr, auth_handler=None, statics=vec![], reuse_port=false))]
 #[allow(clippy::type_complexity)]
 fn serve(
     py: Python<'_>,
@@ -635,6 +635,7 @@ fn serve(
     addr: String,
     auth_handler: Option<Py<PyAny>>,
     statics: Vec<(String, String, Option<String>, bool)>,
+    reuse_port: bool,
 ) -> PyResult<()> {
     let socket: std::net::SocketAddr = addr
         .parse()
@@ -677,7 +678,7 @@ fn serve(
     let server_thread = std::thread::spawn(move || -> Result<(), String> {
         let runtime = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
         runtime
-            .block_on(mgr.serve(socket, shutdown_rx, sd_flag))
+            .block_on(mgr.serve(socket, shutdown_rx, sd_flag, reuse_port))
             .map_err(|e| e.to_string())
     });
     // Attente par tranches (pas un `join` bloquant) : entre deux tranches on
@@ -718,12 +719,13 @@ fn serve(
 /// services backend, authentifie à l'edge, forwarde signé. `routes` = liste de
 /// (prefix, service, upstream_url, requires_auth).
 #[pyfunction]
-#[pyo3(signature = (routes, addr, auth_handler=None))]
+#[pyo3(signature = (routes, addr, auth_handler=None, reuse_port=false))]
 fn serve_gateway(
     py: Python<'_>,
     routes: Vec<(String, String, String, bool)>,
     addr: String,
     auth_handler: Option<Py<PyAny>>,
+    reuse_port: bool,
 ) -> PyResult<()> {
     let socket: std::net::SocketAddr = addr
         .parse()
@@ -745,7 +747,7 @@ fn serve_gateway(
     let server_thread = std::thread::spawn(move || -> Result<(), String> {
         let runtime = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
         runtime
-            .block_on(api::gateway::serve(gw_routes, socket, auth, shutdown_rx, shutting_down))
+            .block_on(api::gateway::serve(gw_routes, socket, auth, shutdown_rx, shutting_down, reuse_port))
             .map_err(|e| e.to_string())
     });
     loop {

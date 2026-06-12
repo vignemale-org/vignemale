@@ -741,6 +741,24 @@ pub fn build_router(
     Ok(app.layer(cors_layer()))
 }
 
+/// Crée un listener TCP. Avec `reuse_port`, active SO_REUSEPORT pour que N
+/// process worker (mode multi-process) partagent le même port — le noyau
+/// répartit les connexions entre eux.
+pub(crate) fn make_listener(addr: SocketAddr, reuse_port: bool) -> anyhow::Result<tokio::net::TcpListener> {
+    use socket2::{Domain, Protocol, Socket, Type};
+    let domain = if addr.is_ipv6() { Domain::IPV6 } else { Domain::IPV4 };
+    let socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))?;
+    socket.set_reuse_address(true)?;
+    if reuse_port {
+        socket.set_reuse_port(true)?;
+    }
+    socket.bind(&addr.into())?;
+    socket.listen(1024)?;
+    socket.set_nonblocking(true)?;
+    Ok(tokio::net::TcpListener::from_std(socket.into())?)
+}
+
+#[allow(clippy::too_many_arguments)]
 pub async fn serve(
     endpoints: Vec<(Endpoint, HandlerKind)>,
     addr: SocketAddr,
@@ -748,12 +766,13 @@ pub async fn serve(
     mut shutdown: tokio::sync::watch::Receiver<bool>,
     shutting_down: Arc<AtomicBool>,
     statics: Vec<StaticRoute>,
+    reuse_port: bool,
 ) -> anyhow::Result<()> {
     crate::observability::init_tracing();
     let count = endpoints.len();
     let n_statics = statics.len();
     let app = build_router(endpoints, auth, shutting_down, statics)?;
-    let listener = tokio::net::TcpListener::bind(addr).await?;
+    let listener = make_listener(addr, reuse_port)?;
     tracing::info!(target: "vignemale::api", addr = %addr, endpoints = count, statics = n_statics, "serveur démarré");
     // Arrêt gracieux : on cesse d'accepter, les requêtes en vol terminent.
     axum::serve(listener, app)

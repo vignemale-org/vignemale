@@ -40,13 +40,15 @@ impl Manager {
 
     /// Démarre le serveur. S'arrête gracieusement (drain des requêtes en vol)
     /// quand `shutdown` passe à `true` ; `shutting_down` pilote le healthz (503).
+    #[allow(clippy::too_many_arguments)]
     pub async fn serve(
         self,
         addr: SocketAddr,
         shutdown: tokio::sync::watch::Receiver<bool>,
         shutting_down: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        reuse_port: bool,
     ) -> anyhow::Result<()> {
-        server::serve(self.endpoints, addr, self.auth, shutdown, shutting_down, self.statics).await
+        server::serve(self.endpoints, addr, self.auth, shutdown, shutting_down, self.statics, reuse_port).await
     }
 }
 

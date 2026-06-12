@@ -20,6 +20,7 @@ tokio = { version = "1", features = ["sync", "net", "rt", "macros", "time"] }
 axum = "0.7"
 tower-http = { version = "0.5", features = ["cors", "fs"] }
 form_urlencoded = "1"
+socket2 = "0.5"   # SO_REUSEPORT pour le mode multi-process
 tokio-stream = "0.1"
 # gateway — forward HTTP vers les services backend (reqwest rustls, pas d'openssl)
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }

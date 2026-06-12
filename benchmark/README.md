@@ -38,6 +38,21 @@ les lectures (son cycle HTTP est en Rust, pas sur la boucle asyncio) :
 | `GET /items/42` | **39 807** req/s · p99 4.9 ms | 35 461 req/s · p99 4.3 ms |
 | `POST /orders` (Pydantic) | 29 325 req/s · p99 7.8 ms | **34 682** req/s · p99 3.3 ms |
 
+## Résultat — 4 workers chacun (`VIGNEMALE_WORKERS=4` vs `uvicorn --workers 4`)
+
+Le multi-process efface le déficit du POST validé (le GIL ne sérialise plus) :
+Vignemale passe **devant sur les trois scénarios**.
+
+| Scénario | Vignemale (4w) | FastAPI (4w) |
+|---|---|---|
+| `GET /hello` | **39 102** req/s | 36 067 req/s |
+| `GET /items/42` | **45 171** req/s | 38 808 req/s |
+| `POST /orders` (Pydantic) | **40 794** req/s | 33 139 req/s |
+
+(Sur un laptop, oha + 8 serveurs + Postgres se partagent les cœurs, donc 4
+workers ne quadruplent pas le débit — l'important est le classement à config
+identique. Sur une machine de prod dédiée, l'écart s'élargit.)
+
 ## Lecture honnête des chiffres
 
 - **Vignemale gagne franchement sur les lectures** : routing et sérialisation
@@ -51,5 +66,6 @@ les lectures (son cycle HTTP est en Rust, pas sur la boucle asyncio) :
   du JS, pas du Python sous GIL ; et la validation reste en Pydantic (Python),
   là où Encore valide en Rust. Notre angle est « le backend Python le plus
   rapide à configuration égale », pas « le plus rapide tout court ».
-- **Piste** : un mode multi-process (`VIGNEMALE_WORKERS`) côté Vignemale
-  effacerait l'écart sur le POST — chaque process garde son cycle HTTP Rust.
+- **Résolu** : le mode multi-process `VIGNEMALE_WORKERS=N` (fork + SO_REUSEPORT,
+  chaque worker garde son cycle HTTP Rust et son interpréteur) met Vignemale
+  devant sur tous les scénarios à config identique — cf. tableau 4 workers.

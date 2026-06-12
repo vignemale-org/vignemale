@@ -43,6 +43,7 @@ pub async fn serve(
     auth: Option<Arc<dyn AuthHandler>>,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
     _shutting_down: Arc<AtomicBool>,
+    reuse_port: bool,
 ) -> anyhow::Result<()> {
     crate::observability::init_tracing();
     // préfixe le plus long d'abord ("/" en dernier) — cf. routing::pick_route
@@ -58,7 +59,7 @@ pub async fn serve(
         .fallback(proxy::handle)
         .with_state(state)
         .layer(super::server::cors_layer_pub());
-    let listener = tokio::net::TcpListener::bind(addr).await?;
+    let listener = super::server::make_listener(addr, reuse_port)?;
     tracing::info!(target: "vignemale::gateway", addr = %addr, services = n, "gateway démarrée");
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {

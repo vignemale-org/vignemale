@@ -296,7 +296,7 @@ def _auth_adapter(token: str):
     return data
 
 
-def serve_gateway(routes: list, addr: str = "127.0.0.1:8080") -> None:
+def serve_gateway(routes: list, addr: str = "127.0.0.1:8080", reuse_port: bool = False) -> None:
     """Démarre la GATEWAY : l'entrée unique d'une app multi-services déployée.
 
     `routes` : liste de (prefix, service, upstream_url, requires_auth). Le
@@ -307,13 +307,13 @@ def serve_gateway(routes: list, addr: str = "127.0.0.1:8080") -> None:
     print(f"vignemale: gateway sur http://{addr} ({len(routes)} service(s))", flush=True)
     try:
         _core.serve_gateway(
-            routes, addr, _auth_adapter if _auth_handler is not None else None
+            routes, addr, _auth_adapter if _auth_handler is not None else None, reuse_port
         )
     except KeyboardInterrupt:
         print("vignemale: gateway arrêtée", flush=True)
 
 
-def serve(addr: str = "127.0.0.1:8080") -> None:
+def serve(addr: str = "127.0.0.1:8080", reuse_port: bool = False) -> None:
     """Démarre le serveur HTTP.
 
     S'arrête **gracieusement** sur Ctrl-C ou SIGTERM (containers) : healthz
@@ -342,6 +342,7 @@ def serve(addr: str = "127.0.0.1:8080") -> None:
             addr,
             _auth_adapter if _auth_handler is not None else None,
             list(_static_routes),
+            reuse_port,
         )
     except KeyboardInterrupt:
         print("vignemale: arrêté", flush=True)

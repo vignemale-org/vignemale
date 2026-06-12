@@ -67,14 +67,84 @@ def _provision(path: str) -> None:
         devinfra.provision_local(databases)
 
 
-def cmd_run(args):
-    # Infrastructure-from-Code : on lit les ressources déclarées et on
-    # provisionne le local AVANT d'importer le code.
-    _provision(args.path)
-    _load_app(args.path)
+def _run_one(path: str, addr: str, reuse_port: bool) -> None:
+    """Charge l'app et sert (un worker, ou le mode mono-process)."""
+    _load_app(path)
     from vignemale.api import serve
 
-    serve(args.addr)
+    serve(addr, reuse_port=reuse_port)
+
+
+def _run_workers(path: str, addr: str, workers: int) -> None:
+    """Multi-process : fork N workers qui partagent le port (SO_REUSEPORT).
+
+    Le parent superviseur ne touche JAMAIS le core Rust (sinon le runtime
+    tokio démarré avant le fork corromprait les workers). La provision (qui
+    parle au core) tourne donc dans un fork jetable ; puis chaque worker, après
+    son propre fork, recharge l'app et ouvre ses propres connexions — aucune
+    socket héritée/partagée entre process.
+    """
+    import signal
+    import time
+
+    # provision dans un process jetable → le parent reste vierge de tout tokio
+    pid = os.fork()
+    if pid == 0:
+        _provision(path)
+        os._exit(0)
+    os.waitpid(pid, 0)
+
+    children = []
+    for _ in range(workers):
+        pid = os.fork()
+        if pid == 0:  # worker
+            _provision(path)  # idempotent : pose le DSN local dans CE worker
+            _run_one(path, addr, reuse_port=True)
+            os._exit(0)
+        children.append(pid)
+
+    print(f"vignemale: {workers} workers sur http://{addr}", flush=True)
+    stopping = {"v": False}
+
+    def _stop(*_a):
+        if stopping["v"]:
+            return
+        stopping["v"] = True
+        for pid in children:
+            try:
+                os.kill(pid, signal.SIGINT)  # déclenche le drain gracieux
+            except ProcessLookupError:
+                pass
+
+    signal.signal(signal.SIGINT, _stop)
+    signal.signal(signal.SIGTERM, _stop)
+
+    # attend tous les workers ; si l'un meurt sans qu'on arrête, on stoppe tout
+    alive = set(children)
+    while alive:
+        try:
+            pid, _ = os.wait()
+        except ChildProcessError:
+            break
+        except InterruptedError:
+            continue
+        alive.discard(pid)
+        if not stopping["v"] and alive:
+            time.sleep(0.1)  # laisser le signal se propager si crash
+            _stop()
+    print("vignemale: workers arrêtés", flush=True)
+
+
+def cmd_run(args):
+    # Infrastructure-from-Code : provisionne le local AVANT d'importer le code.
+    workers = int(os.environ.get("VIGNEMALE_WORKERS", "1"))
+    if workers > 1:
+        # la provision se fait dans _run_workers (fork jetable) pour garder le
+        # parent superviseur vierge de tout runtime Rust avant les forks.
+        _run_workers(args.path, args.addr, workers)
+    else:
+        _provision(args.path)
+        _run_one(args.path, args.addr, reuse_port=False)
 
 
 def cmd_gateway(args):

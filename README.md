@@ -352,6 +352,9 @@ GET /items   vignemale 38 458 req/s   fastapi 13 581 req/s
 POST /orders vignemale 29 254 req/s   fastapi 13 940 req/s   (validation Pydantic)
 ```
 
+À configuration égale (`VIGNEMALE_WORKERS=N`, fork + SO_REUSEPORT), Vignemale
+passe devant FastAPI sur **tous** les scénarios, POST validé compris.
+
 ## ⚖️ Licence
 
 Le code du cœur et les schémas sont **dérivés d'Encore** (MPL-2.0) — voir `proto/ATTRIBUTION.md`. Attribution obligatoire.
