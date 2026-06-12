@@ -339,6 +339,19 @@ Après toute modif du core ou du binding : `maturin develop` (depuis `runtimes/p
 
 > ⚠️ `PROTOC` doit être exporté à chaque build (le `build.rs` du core en a besoin).
 
+## 🏎 Performance (vs FastAPI)
+
+À process égal, le cycle HTTP en Rust (axum/tokio, GIL relâché pendant l'I/O)
+donne **2 à 2,8× FastAPI** ; un seul process Vignemale rivalise avec 4 workers
+uvicorn sur les lectures. Méthodo + chiffres honnêtes (y compris où FastAPI
+repasse devant) : [`benchmark/`](benchmark/).
+
+```
+GET /hello   vignemale 42 570 req/s   fastapi 17 239 req/s   (1 process chacun)
+GET /items   vignemale 38 458 req/s   fastapi 13 581 req/s
+POST /orders vignemale 29 254 req/s   fastapi 13 940 req/s   (validation Pydantic)
+```
+
 ## ⚖️ Licence
 
 Le code du cœur et les schémas sont **dérivés d'Encore** (MPL-2.0) — voir `proto/ATTRIBUTION.md`. Attribution obligatoire.
