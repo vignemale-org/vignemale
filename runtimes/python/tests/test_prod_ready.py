@@ -75,3 +75,31 @@ def test_arret_gracieux_drain():
     # après l'arrêt : plus aucune connexion acceptée
     with pytest.raises(urllib.error.URLError):
         urllib.request.urlopen(f"http://{addr}/hello", timeout=2)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="signaux POSIX")
+def test_keep_accepting_fenetre_load_balancer():
+    """Séquence shutdown façon Encore : sur signal, healthz passe 503 mais le
+    serveur CONTINUE d'accepter pendant VIGNEMALE_SHUTDOWN_KEEP_ACCEPTING — le
+    temps que le load balancer voie le 503 et cesse de router."""
+    addr = f"127.0.0.1:{free_port()}"
+    env = dict(os.environ, VIGNEMALE_ADDR=addr, VIGNEMALE_SHUTDOWN_KEEP_ACCEPTING="3")
+    srv = Server(
+        [sys.executable, "-m", "vignemale_cli", "run",
+         os.path.join(HERE, "app_hello.py"), "--addr", addr],
+        addr, env=env, capture=True,
+    )
+
+    def code(path):
+        try:
+            with urllib.request.urlopen(f"http://{addr}{path}", timeout=2) as r:
+                return r.status
+        except urllib.error.HTTPError as e:
+            return e.code
+
+    assert code("/__vignemale/healthz") == 200
+    srv.proc.send_signal(signal.SIGINT)
+    time.sleep(0.8)  # dans la fenêtre keep_accepting (3 s)
+    assert code("/__vignemale/healthz") == 503  # le LB voit l'arrêt imminent
+    assert code("/hello") == 200                 # mais on accepte toujours
+    assert srv.proc.wait(timeout=10) == 0        # puis arrêt propre

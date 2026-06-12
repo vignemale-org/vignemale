@@ -614,6 +614,39 @@ fn call_py_stream_handler(
     Ok(())
 }
 
+/// Séquence d'arrêt gracieux (miroir du shutdown.rs d'Encore) :
+/// 1. healthz → 503 immédiatement (le load balancer le voit) ;
+/// 2. `keep_accepting` : on CONTINUE d'accepter pendant cette fenêtre, le temps
+///    que le LB cesse de router vers nous (sinon il enverrait des requêtes à un
+///    process qui n'accepte plus → connexions refusées). Réglé par
+///    `VIGNEMALE_SHUTDOWN_KEEP_ACCEPTING` (secondes ; 0 par défaut, utile en
+///    prod K8s/Scaleway) ;
+/// 3. stop-accept + drain des requêtes en vol, borné par
+///    `VIGNEMALE_SHUTDOWN_TIMEOUT` (10 s par défaut).
+fn graceful_shutdown(
+    py: Python<'_>,
+    shutting_down: &Arc<std::sync::atomic::AtomicBool>,
+    shutdown_tx: &tokio::sync::watch::Sender<bool>,
+    server_thread: &std::thread::JoinHandle<Result<(), String>>,
+) {
+    let env_secs = |name: &str, default: u64| {
+        std::env::var(name).ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(default)
+    };
+    shutting_down.store(true, std::sync::atomic::Ordering::SeqCst); // healthz → 503
+    let keep = env_secs("VIGNEMALE_SHUTDOWN_KEEP_ACCEPTING", 0);
+    if keep > 0 {
+        py.allow_threads(|| std::thread::sleep(std::time::Duration::from_secs(keep)));
+    }
+    let _ = shutdown_tx.send(true); // stop-accept + drain
+    let drain = env_secs("VIGNEMALE_SHUTDOWN_TIMEOUT", 10);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(drain);
+    py.allow_threads(|| {
+        while !server_thread.is_finished() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    });
+}
+
 /// Démarre le serveur HTTP avec les endpoints donnés (bloque jusqu'à l'arrêt).
 /// `endpoints` = liste de (name, method, path, handler, stream, auth,
 /// timeout_s, body_limit).
@@ -695,21 +728,7 @@ fn serve(
         }
         py.allow_threads(|| std::thread::sleep(std::time::Duration::from_millis(100)));
         if let Err(signal) = py.check_signals() {
-            // Arrêt gracieux : healthz → 503, on cesse d'accepter, et on
-            // laisse les requêtes en vol finir (borné par
-            // VIGNEMALE_SHUTDOWN_TIMEOUT, défaut 10 s).
-            shutting_down.store(true, std::sync::atomic::Ordering::SeqCst);
-            let _ = shutdown_tx.send(true);
-            let drain = std::env::var("VIGNEMALE_SHUTDOWN_TIMEOUT")
-                .ok()
-                .and_then(|v| v.parse::<u64>().ok())
-                .unwrap_or(10);
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(drain);
-            py.allow_threads(|| {
-                while !server_thread.is_finished() && std::time::Instant::now() < deadline {
-                    std::thread::sleep(std::time::Duration::from_millis(50));
-                }
-            });
+            graceful_shutdown(py, &shutting_down, &shutdown_tx, &server_thread);
             return Err(signal);
         }
     }
@@ -744,10 +763,11 @@ fn serve_gateway(
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let shutting_down = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let sd_flag = shutting_down.clone();
     let server_thread = std::thread::spawn(move || -> Result<(), String> {
         let runtime = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
         runtime
-            .block_on(api::gateway::serve(gw_routes, socket, auth, shutdown_rx, shutting_down, reuse_port))
+            .block_on(api::gateway::serve(gw_routes, socket, auth, shutdown_rx, sd_flag, reuse_port))
             .map_err(|e| e.to_string())
     });
     loop {
@@ -760,8 +780,7 @@ fn serve_gateway(
         }
         py.allow_threads(|| std::thread::sleep(std::time::Duration::from_millis(100)));
         if let Err(signal) = py.check_signals() {
-            let _ = shutdown_tx.send(true);
-            py.allow_threads(|| std::thread::sleep(std::time::Duration::from_millis(300)));
+            graceful_shutdown(py, &shutting_down, &shutdown_tx, &server_thread);
             return Err(signal);
         }
     }

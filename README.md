@@ -160,7 +160,9 @@ qu'Encore : héberge le front sur Vercel/Netlify et pointe-le sur l'API.
   (`VIGNEMALE_REQUEST_TIMEOUT`, 30 s) → 504 `deadline_exceeded`, le handler
   finit en arrière-plan et ses logs sont conservés ;
 - **limite de body** par endpoint (`@api(body_limit=1024)`) ou globale
-  (`VIGNEMALE_MAX_BODY`, 10 Mio) → 413 `resource_exhausted`.
+  (`VIGNEMALE_MAX_BODY`, 10 Mio) → 413 `resource_exhausted` ;
+- **séquence d'arrêt façon Encore** : healthz 503 → `VIGNEMALE_SHUTDOWN_KEEP_ACCEPTING`
+  s (on accepte encore, le temps que le load balancer cesse de router) → drain.
 
 **Authentification** (façon Encore — l'orchestration est dans le core Rust) :
 
