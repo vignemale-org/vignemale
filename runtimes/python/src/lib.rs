@@ -220,6 +220,18 @@ fn sqldb_query(py: Python<'_>, dsn: String, sql: String, params_json: String) ->
     .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:#}")))
 }
 
+/// Exécute un script SQL multi-instructions (migrations).
+#[pyfunction]
+fn sqldb_batch(py: Python<'_>, dsn: String, sql: String) -> PyResult<()> {
+    py.allow_threads(|| {
+        shared_runtime().block_on(async {
+            let pool = sqldb::pool_for_dsn(&dsn)?;
+            sqldb::batch(&pool, &sql).await
+        })
+    })
+    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:#}")))
+}
+
 /// Valide une requête par PREPARE (sans l'exécuter) → JSON {params, columns}.
 #[pyfunction]
 fn sqldb_prepare(py: Python<'_>, dsn: String, sql: String) -> PyResult<String> {
@@ -799,6 +811,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(sqldb_query, m)?)?;
     m.add_function(wrap_pyfunction!(sqldb_execute, m)?)?;
     m.add_function(wrap_pyfunction!(sqldb_prepare, m)?)?;
+    m.add_function(wrap_pyfunction!(sqldb_batch, m)?)?;
     m.add_function(wrap_pyfunction!(sqldb_orm, m)?)?;
     m.add_function(wrap_pyfunction!(sqldb_begin, m)?)?;
     m.add_function(wrap_pyfunction!(sqldb_tx_query, m)?)?;

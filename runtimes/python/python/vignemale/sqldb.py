@@ -12,14 +12,23 @@ choisit le backend. Le DSN est résolu dans cet ordre :
   1. `VIGNEMALE_SQLDB_<NOM>`  (ex. VIGNEMALE_SQLDB_TODO)
   2. `VIGNEMALE_SQLDB`        (défaut commun à toutes les bases)
 
-En local : un Postgres Docker. En prod : posé par le provisioning (à venir).
-Les paramètres sont positionnels, syntaxe Postgres : `$1`, `$2`, …
+En local : un Postgres Docker. En prod : posé par le provisioning.
+
+Deux façons de l'utiliser (comme Encore) :
+- requêtes directes (`query`/`execute`/`transaction`), servies par le core ;
+- **n'importe quel ORM** (SQLAlchemy, SQLModel, Tortoise…) via
+  `db.connection_string` — l'ORM se connecte avec son propre driver. On
+  fournit la base + la connexion + les migrations ; l'ORM fait le reste.
 """
 
+import glob
 import json
 import os
 
 from . import _core
+
+# Bases déclarées avec un dossier de migrations (appliquées par `vignemale run`).
+_databases: list = []
 
 
 class SQLError(Exception):
@@ -27,8 +36,23 @@ class SQLError(Exception):
 
 
 class SQLDatabase:
-    def __init__(self, name: str):
+    def __init__(self, name: str, migrations: str = None):
+        """`migrations` : dossier de fichiers `.sql` (triés par nom) appliqués
+        une fois chacun au démarrage (`vignemale run`), façon Encore — pour les
+        schémas gérés par un ORM/outil tiers (alembic, etc.)."""
         self.name = name
+        self._migrations = None
+        if migrations:
+            import inspect
+
+            base = os.path.dirname(
+                os.path.abspath(inspect.stack()[1].frame.f_globals.get("__file__", "."))
+            )
+            self._migrations = (
+                migrations if os.path.isabs(migrations)
+                else os.path.normpath(os.path.join(base, migrations))
+            )
+        _databases.append(self)
 
     @property
     def dsn(self) -> str:
@@ -41,6 +65,55 @@ class SQLDatabase:
                 "(ex. postgres://user:pass@127.0.0.1:5432/db)"
             )
         return dsn
+
+    @property
+    def connection_string(self) -> str:
+        """Le DSN, pour brancher l'ORM de ton choix (SQLAlchemy, SQLModel…).
+
+            engine = create_engine(db.connection_string.replace(
+                "postgres://", "postgresql+psycopg://", 1))
+        """
+        return self.dsn
+
+    def migrate(self) -> int:
+        """Applique les fichiers de migration non encore appliqués (idempotent,
+        suivis dans `_vignemale_migrations`). Renvoie le nombre appliqué."""
+        if not self._migrations or not os.path.isdir(self._migrations):
+            return 0
+        self.batch(
+            "CREATE TABLE IF NOT EXISTS _vignemale_migrations ("
+            "name TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())"
+        )
+        done = {
+            r["name"]
+            for r in self.query("SELECT name FROM _vignemale_migrations")
+        }
+        files = sorted(
+            f for f in glob.glob(os.path.join(self._migrations, "*.sql"))
+        )
+        applied = 0
+        for path in files:
+            name = os.path.basename(path)
+            if name in done:
+                continue
+            with open(path) as f:
+                sql = f.read()
+            safe = name.replace("'", "''")
+            # migration + enregistrement dans UN batch atomique : si la
+            # migration échoue, rien n'est marqué appliqué (rollback).
+            self.batch(
+                "BEGIN;\n" + sql.rstrip().rstrip(";") + ";\n"
+                f"INSERT INTO _vignemale_migrations (name) VALUES ('{safe}');\nCOMMIT;"
+            )
+            applied += 1
+        return applied
+
+    def batch(self, sql: str) -> None:
+        """Exécute un script SQL multi-instructions (sans paramètres)."""
+        try:
+            _core.sqldb_batch(self.dsn, sql)
+        except RuntimeError as e:
+            raise SQLError(str(e)) from None
 
     def query(self, sql: str, *params) -> list:
         """SELECT → liste de dicts (une entrée par ligne)."""

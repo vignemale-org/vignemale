@@ -67,6 +67,19 @@ def _provision(path: str) -> None:
         devinfra.provision_local(databases)
 
 
+def _migrate(path: str) -> None:
+    """Applique les migrations des bases déclarées avec un dossier `migrations`.
+    L'app doit être chargée (les SQLDatabase sont alors enregistrées)."""
+    from vignemale.sqldb import _databases
+
+    for db in _databases:
+        if db._migrations:
+            n = db.migrate()
+            if n:
+                print(f"vignemale: {n} migration(s) appliquée(s) sur « {db.name} »",
+                      flush=True)
+
+
 def _run_one(path: str, addr: str, reuse_port: bool) -> None:
     """Charge l'app et sert (un worker, ou le mode mono-process)."""
     _load_app(path)
@@ -87,10 +100,13 @@ def _run_workers(path: str, addr: str, workers: int) -> None:
     import signal
     import time
 
-    # provision dans un process jetable → le parent reste vierge de tout tokio
+    # provision + migrations dans un process jetable → le parent reste vierge
+    # de tout tokio, et les migrations ne tournent qu'une fois (pas par worker).
     pid = os.fork()
     if pid == 0:
         _provision(path)
+        _load_app(path)
+        _migrate(path)
         os._exit(0)
     os.waitpid(pid, 0)
 
@@ -144,7 +160,11 @@ def cmd_run(args):
         _run_workers(args.path, args.addr, workers)
     else:
         _provision(args.path)
-        _run_one(args.path, args.addr, reuse_port=False)
+        _load_app(args.path)
+        _migrate(args.path)
+        from vignemale.api import serve
+
+        serve(args.addr, reuse_port=False)
 
 
 def cmd_gateway(args):

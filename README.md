@@ -272,6 +272,23 @@ c'est le provider switch. `vignemale check` liste aussi les bases déclarées
 - `vignemale.log` (`log.info("msg", champ=valeur)`) écrit au même format JSON que le core Rust ;
 - niveau via `VIGNEMALE_LOG` (`debug` | `info` | `warn` | `error`, défaut `info`).
 
+### N'importe quel ORM (façon Encore)
+
+On n'impose **pas** d'ORM. Comme Encore, on fournit la base, la *connection
+string* et les migrations ; ton ORM (SQLAlchemy, SQLModel, Tortoise…) fait le
+reste avec son propre driver :
+
+```python
+db = SQLDatabase("blog", migrations="migrations")   # .sql appliqués au `run`
+engine = create_engine(db.connection_string.replace(
+    "postgres://", "postgresql+psycopg://", 1))      # SQLAlchemy branché
+```
+
+`vignemale run` provisionne la base **et** applique les migrations non encore
+appliquées (suivi dans `_vignemale_migrations`, atomique, idempotent). Exemple
+complet : `examples/blog/`. Le `datamodel` Pydantic ci-dessous reste une
+**option** (c'est lui qui débloque le RGPD), pas une obligation.
+
 ### Modèles de données & RGPD (le différenciateur vs Encore)
 
 ```python

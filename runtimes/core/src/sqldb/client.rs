@@ -63,6 +63,20 @@ pub async fn prepare(pool: &Pool, sql: &str) -> anyhow::Result<serde_json::Value
     result
 }
 
+/// Exécute un script SQL **multi-instructions** (simple query protocol) —
+/// pour les fichiers de migration. Pas de paramètres.
+pub async fn batch(pool: &Pool, sql: &str) -> anyhow::Result<()> {
+    let started = std::time::Instant::now();
+    let result = async {
+        let client = get_conn(pool).await?;
+        client.batch_execute(sql).await?;
+        Ok(())
+    }
+    .await;
+    trace_query(sql, started, &result);
+    result
+}
+
 /// Exécute une commande (INSERT/UPDATE/DELETE/DDL) et renvoie le nombre de
 /// lignes affectées.
 pub async fn execute(pool: &Pool, sql: &str, params: Vec<SqlParam>) -> anyhow::Result<u64> {
