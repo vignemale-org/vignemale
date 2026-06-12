@@ -24,12 +24,44 @@ import contextvars
 import functools
 import inspect
 import json
+import os
 from typing import Callable, get_type_hints
 
 from . import _core
 
 # Registre des endpoints déclarés (rempli par le décorateur à l'import de l'app).
 _endpoints: list = []
+
+# Registre des dossiers statiques déclarés (servis par le core Rust).
+_static_routes: list = []
+
+
+def static_files(*, path: str, dir: str, spa: bool = False, not_found: str = None) -> None:
+    """Sert un dossier de fichiers statiques **depuis le core Rust** — zéro
+    code Python exécuté par requête (miroir d'`api.static` d'Encore).
+
+        static_files(path="/assets", dir="./public")     # /assets/logo.png …
+        static_files(path="/", dir="./out", spa=True)    # front en fallback :
+        # toute route inconnue de l'API renvoie index.html (routing client —
+        # Next.js `output: 'export'`, Vite, React Router…)
+
+    Les chemins relatifs sont résolus par rapport au fichier qui déclare.
+    """
+    import inspect as _inspect
+
+    base = os.path.dirname(
+        os.path.abspath(_inspect.stack()[1].frame.f_globals.get("__file__", "."))
+    )
+
+    def resolve(p):
+        return p if os.path.isabs(p) else os.path.normpath(os.path.join(base, p))
+
+    directory = resolve(dir)
+    nf = not_found or (os.path.join(directory, "index.html") if spa else None)
+    fallback = spa or path.rstrip("/") == ""
+    _static_routes.append(
+        (path.rstrip("/") or "/", directory, nf and resolve(nf), fallback)
+    )
 
 # Contexte de la requête en cours (posé par le wrapper, lu par `call()` pour
 # propager trace et auth aux appels service-à-service).
@@ -292,6 +324,7 @@ def serve(addr: str = "127.0.0.1:8080") -> None:
             list(_endpoints),
             addr,
             _auth_adapter if _auth_handler is not None else None,
+            list(_static_routes),
         )
     except KeyboardInterrupt:
         print("vignemale: arrêté", flush=True)

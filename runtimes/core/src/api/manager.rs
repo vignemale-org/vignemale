@@ -5,12 +5,13 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use super::server::{self, AuthHandler};
+use super::server::{self, AuthHandler, StaticRoute};
 use super::{Endpoint, HandlerKind};
 
 pub struct Manager {
     endpoints: Vec<(Endpoint, HandlerKind)>,
     auth: Option<Arc<dyn AuthHandler>>,
+    statics: Vec<StaticRoute>,
 }
 
 impl Manager {
@@ -18,6 +19,7 @@ impl Manager {
         Self {
             endpoints: Vec::new(),
             auth: None,
+            statics: Vec::new(),
         }
     }
 
@@ -31,6 +33,11 @@ impl Manager {
         self.auth = Some(auth);
     }
 
+    /// Déclare un dossier de fichiers statiques servi par le core.
+    pub fn add_static(&mut self, route: StaticRoute) {
+        self.statics.push(route);
+    }
+
     /// Démarre le serveur. S'arrête gracieusement (drain des requêtes en vol)
     /// quand `shutdown` passe à `true` ; `shutting_down` pilote le healthz (503).
     pub async fn serve(
@@ -39,7 +46,7 @@ impl Manager {
         shutdown: tokio::sync::watch::Receiver<bool>,
         shutting_down: std::sync::Arc<std::sync::atomic::AtomicBool>,
     ) -> anyhow::Result<()> {
-        server::serve(self.endpoints, addr, self.auth, shutdown, shutting_down).await
+        server::serve(self.endpoints, addr, self.auth, shutdown, shutting_down, self.statics).await
     }
 }
 

@@ -618,7 +618,7 @@ fn call_py_stream_handler(
 /// `endpoints` = liste de (name, method, path, handler, stream, auth,
 /// timeout_s, body_limit).
 #[pyfunction]
-#[pyo3(signature = (endpoints, addr, auth_handler=None))]
+#[pyo3(signature = (endpoints, addr, auth_handler=None, statics=vec![]))]
 #[allow(clippy::type_complexity)]
 fn serve(
     py: Python<'_>,
@@ -634,6 +634,7 @@ fn serve(
     )>,
     addr: String,
     auth_handler: Option<Py<PyAny>>,
+    statics: Vec<(String, String, Option<String>, bool)>,
 ) -> PyResult<()> {
     let socket: std::net::SocketAddr = addr
         .parse()
@@ -659,6 +660,14 @@ fn serve(
     }
     if let Some(func) = auth_handler {
         mgr.set_auth_handler(Arc::new(PyAuthHandler { func }));
+    }
+    for (path, dir, not_found, fallback) in statics {
+        mgr.add_static(api::StaticRoute {
+            path,
+            dir,
+            not_found,
+            fallback,
+        });
     }
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let shutting_down = Arc::new(std::sync::atomic::AtomicBool::new(false));

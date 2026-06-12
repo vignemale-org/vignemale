@@ -75,6 +75,21 @@ pub enum HandlerKind {
     Stream(Arc<dyn StreamHandler>),
 }
 
+/// Fichiers statiques servis par le CORE (miroir du static_assets.rs
+/// d'Encore) : zéro code app exécuté — un front (Next.js `output: 'export'`,
+/// Vite…) est servi directement par le runtime Rust.
+#[derive(Debug, Clone)]
+pub struct StaticRoute {
+    /// Préfixe d'URL ("/assets") ou "/" (devient la route fallback).
+    pub path: String,
+    /// Dossier servi.
+    pub dir: String,
+    /// Fichier renvoyé pour les chemins inconnus (SPA : index.html).
+    pub not_found: Option<String>,
+    /// Sert comme fallback (toute route non matchée par l'API).
+    pub fallback: bool,
+}
+
 /// Résultat d'une tentative d'authentification.
 pub enum AuthOutcome {
     /// Token valide — les données d'auth (JSON) sont transmises au handler.
@@ -288,6 +303,7 @@ pub fn build_router(
     endpoints: Vec<(Endpoint, HandlerKind)>,
     auth: Option<Arc<dyn AuthHandler>>,
     shutting_down: Arc<AtomicBool>,
+    statics: Vec<StaticRoute>,
 ) -> anyhow::Result<Router> {
     let default_body_limit = env_u64("VIGNEMALE_MAX_BODY", 10 * 1024 * 1024) as usize;
 
@@ -670,18 +686,48 @@ pub fn build_router(
         }),
     );
 
-    // Route inconnue → 404 structuré (même contrat d'erreur que le reste).
-    app = app.fallback(|| async {
-        let mut r = AxumResponse::new(Body::from(error_json(
-            "not_found",
-            "endpoint inconnu",
-            None,
-        )));
-        *r.status_mut() = StatusCode::NOT_FOUND;
-        r.headers_mut()
-            .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        r
-    });
+    // Fichiers statiques : servis par tower-http directement (zéro app code).
+    let mut has_static_fallback = false;
+    for s in &statics {
+        use tower_http::services::{ServeDir, ServeFile};
+        // `.fallback(...)` (et pas `not_found_service`, qui force un 404) :
+        // une SPA doit renvoyer index.html en 200 pour le routing client.
+        if s.fallback {
+            has_static_fallback = true;
+            match &s.not_found {
+                Some(nf) => {
+                    app = app
+                        .fallback_service(ServeDir::new(&s.dir).fallback(ServeFile::new(nf)))
+                }
+                None => app = app.fallback_service(ServeDir::new(&s.dir)),
+            }
+        } else {
+            match &s.not_found {
+                Some(nf) => {
+                    app = app.nest_service(
+                        &s.path,
+                        ServeDir::new(&s.dir).fallback(ServeFile::new(nf)),
+                    )
+                }
+                None => app = app.nest_service(&s.path, ServeDir::new(&s.dir)),
+            }
+        }
+    }
+
+    // Route inconnue → 404 structuré (sauf si un front sert le fallback).
+    if !has_static_fallback {
+        app = app.fallback(|| async {
+            let mut r = AxumResponse::new(Body::from(error_json(
+                "not_found",
+                "endpoint inconnu",
+                None,
+            )));
+            *r.status_mut() = StatusCode::NOT_FOUND;
+            r.headers_mut()
+                .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+            r
+        });
+    }
 
     Ok(app.layer(cors_layer()))
 }
@@ -692,12 +738,14 @@ pub async fn serve(
     auth: Option<Arc<dyn AuthHandler>>,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
     shutting_down: Arc<AtomicBool>,
+    statics: Vec<StaticRoute>,
 ) -> anyhow::Result<()> {
     crate::observability::init_tracing();
     let count = endpoints.len();
-    let app = build_router(endpoints, auth, shutting_down)?;
+    let n_statics = statics.len();
+    let app = build_router(endpoints, auth, shutting_down, statics)?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    tracing::info!(target: "vignemale::api", addr = %addr, endpoints = count, "serveur démarré");
+    tracing::info!(target: "vignemale::api", addr = %addr, endpoints = count, statics = n_statics, "serveur démarré");
     // Arrêt gracieux : on cesse d'accepter, les requêtes en vol terminent.
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {

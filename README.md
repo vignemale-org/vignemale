@@ -137,6 +137,20 @@ raise APIError("permission_denied", "admin requis")   # → 403
 CORS est ouvert par défaut (dev) ; `VIGNEMALE_CORS_ALLOW_ORIGINS=https://app.example.com`
 restreint. Health check : `GET /__vignemale/healthz`.
 
+**Servir un front** (Next.js exporté, Vite, SPA…) — façon `api.static`
+d'Encore, les fichiers sont servis par le **core Rust**, zéro Python par
+requête :
+
+```python
+static_files(path="/", dir="out", spa=True)   # `next build` (output: 'export')
+# spa=True : toute route inconnue de l'API → index.html (routing client)
+static_files(path="/assets", dir="./public")  # ou sous un préfixe
+```
+
+Front + API dans le même process et le même deploy (`examples/fullstack/`).
+Pour du Next.js SSR complet (rendu serveur Node), même recommandation
+qu'Encore : héberge le front sur Vercel/Netlify et pointe-le sur l'API.
+
 **Prod-ready, sans configuration** :
 - **arrêt gracieux** sur Ctrl-C / SIGTERM : healthz passe à 503 `shutting_down`,
   plus aucune connexion acceptée, les requêtes en vol **terminent** (borné par
