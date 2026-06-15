@@ -27,12 +27,12 @@ jobs:
         include:
           - platform: linux/amd64
             runner: ubuntu-latest
-          # arm64 en QEMU sur un runner amd64 (marche partout, mais émulé/lent).
-          # Si le plan GitHub a des runners arm natifs, remplacer par
+          # arm64 DÉSACTIVÉ : en QEMU émulé sur runner amd64, la compilation Rust
+          # fat-LTO prend >1h (impraticable). Scaleway = amd64, donc inutile pour
+          # le deploy. Pour le rebrancher (dev local Mac arm64), utiliser un runner
+          # ARM NATIF — décommenter quand le plan GitHub en dispose :
+          # - platform: linux/arm64
           #   runner: ubuntu-24.04-arm
-          # → build natif, bien plus rapide.
-          - platform: linux/arm64
-            runner: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
