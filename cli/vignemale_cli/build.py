@@ -19,8 +19,9 @@ import shutil
 import subprocess
 import tempfile
 
-# Parties de la source vignemale nécessaires pour compiler le wheel.
-_SRC_PARTS = ["Cargo.toml", "Cargo.lock", "runtimes", "proto", "cli"]
+# Parties de la source vignemale nécessaires pour compiler le wheel (le runtime
+# seul : ni cli/ ni outillage dev ne partent dans l'image).
+_SRC_PARTS = ["Cargo.toml", "Cargo.lock", "runtimes", "proto"]
 # Exclus de la copie du contexte (lourds / inutiles au build).
 _IGNORE = shutil.ignore_patterns(
     "target", ".venv", "__pycache__", "*.pyc", ".pytest_cache",
@@ -80,7 +81,7 @@ def _dockerfile(container_app: str) -> str:
     return f"""# syntax=docker/dockerfile:1
 # Généré par `vignemale build` — ne pas éditer à la main.
 
-# ---- étage 1 : compile le wheel Rust+PyO3 (abi3) via maturin ----
+# ---- étage 1 : compile le wheel Rust+PyO3 (abi3, strippé+LTO) via maturin ----
 FROM rust:1-bookworm AS builder
 RUN apt-get update && apt-get install -y --no-install-recommends \\
         protobuf-compiler libprotobuf-dev patchelf python3 python3-dev python3-pip \\
@@ -91,20 +92,26 @@ WORKDIR /build
 COPY src/ /build/
 RUN cd runtimes/python && maturin build --release --out /wheels
 
-# ---- étage 2 : runtime minimal ----
-FROM python:3.12-slim-bookworm
+# ---- étage 2 : installe le RUNTIME SEUL (pydantic + .so) dans un dossier plat.
+# Pas de CLI/griffe/protobuf : le runtime part en prod avec pydantic pour seule
+# dépendance. python 3.11 = même version que l'image distroless finale.
+FROM python:3.11-slim-bookworm AS installer
+COPY --from=builder /wheels/*.whl /tmp/
+RUN pip install --no-cache-dir --target=/pylibs /tmp/*.whl \\
+    && find /pylibs -type d -name __pycache__ -prune -exec rm -rf {{}} +
+
+# ---- étage 3 : image finale distroless (python 3.11, sans shell ni pip) ----
+FROM gcr.io/distroless/python3-debian12
 WORKDIR /app
-COPY --from=builder /wheels/*.whl /tmp/wheels/
-COPY src/cli /tmp/cli
-RUN pip install --no-cache-dir /tmp/wheels/*.whl /tmp/cli \\
-    && rm -rf /tmp/wheels /tmp/cli
+COPY --from=installer /pylibs /pylibs
 COPY app/ /app/
-ENV VIGNEMALE_ADDR=0.0.0.0:8080 \\
+# Le provider switch : en prod, `vignemale deploy` aura posé VIGNEMALE_SQLDB_* /
+# VIGNEMALE_S3_* / VIGNEMALE_SECRET_* ; le point d'entrée prod ne provisionne pas.
+ENV PYTHONPATH=/pylibs \\
+    VIGNEMALE_ADDR=0.0.0.0:8080 \\
     VIGNEMALE_WORKERS=1
 EXPOSE 8080
-# Le provider switch : en prod, `vignemale deploy` aura posé VIGNEMALE_SQLDB_* /
-# VIGNEMALE_S3_* / VIGNEMALE_SECRET_* → le provisioning local est sauté.
-CMD ["sh", "-c", "vignemale run {container_app} --addr ${{VIGNEMALE_ADDR}}"]
+ENTRYPOINT ["python", "-m", "vignemale", "{container_app}"]
 """
 
 
