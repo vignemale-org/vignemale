@@ -1,0 +1,103 @@
+name: Release PyPI
+
+# Publie sur PyPI sur tag de version (vX.Y.Z) :
+#   - vignemale (runtime Rust+PyO3) : wheels abi3 multi-plateformes via maturin
+#   - vignemale-cli (pur Python) : sdist + wheel
+# Auth : Trusted Publishing (OIDC, pas de token) — configurer le publisher sur
+# PyPI pour chaque projet (org vignemale-org / repo vignemale / ce workflow /
+# environnement « pypi »).
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # ---- wheels du runtime (abi3 : un wheel par plateforme couvre Python ≥ 3.9) ----
+  wheels:
+    name: wheels ${{ matrix.os }}/${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: x86_64 }
+          - { os: ubuntu-latest, target: aarch64 }
+          - { os: macos-13, target: x86_64 }
+          - { os: macos-14, target: aarch64 }
+          - { os: windows-latest, target: x64 }
+    steps:
+      - uses: actions/checkout@v4
+
+      # protoc sur les runners mac/windows (Linux : installé dans le conteneur
+      # manylinux par before-script-linux ci-dessous).
+      - if: runner.os != 'Linux'
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: PyO3/maturin-action@v1
+        with:
+          working-directory: runtimes/python
+          target: ${{ matrix.target }}
+          args: --release --out dist
+          manylinux: auto
+          # conteneur manylinux : installe un protoc récent (avec les types
+          # bien-connus dans ../include) pour le build.rs/prost.
+          before-script-linux: |
+            PB=28.3
+            curl -sSLO https://github.com/protocolbuffers/protobuf/releases/download/v${PB}/protoc-${PB}-linux-x86_64.zip
+            unzip -oq protoc-${PB}-linux-x86_64.zip -d /usr/local
+            protoc --version
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os }}-${{ matrix.target }}
+          path: runtimes/python/dist/*.whl
+
+  # ---- sdist du runtime + paquets pur-Python (cli, deploy) ----
+  sdist-pure:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: sdist du runtime
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: runtimes/python
+          command: sdist
+          args: --out dist
+
+      - name: build cli (pur Python)
+        run: |
+          pipx run build --outdir runtimes/python/dist ./cli
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist-pure
+          path: runtimes/python/dist/*
+
+  # ---- publication PyPI (Trusted Publishing, OIDC) ----
+  publish:
+    needs: [wheels, sdist-pure]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: "*"
+          merge-multiple: true
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist

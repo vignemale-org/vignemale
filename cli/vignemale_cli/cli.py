@@ -188,96 +188,6 @@ def cmd_gen(args):
         print(f"vignemale: écrit {f}")
 
 
-def cmd_deploy(args):
-    import os
-
-    from .collect import extract_path
-    from vignemale_deploy import Target, build_plan, render
-
-    extracted, app_name = extract_path(args.path)
-    target = Target(
-        app=app_name,
-        env=args.env,
-        region=args.region,
-        image=args.image,
-        db_backend=args.db,
-        scw_access_key=os.environ.get("SCW_ACCESS_KEY"),
-        scw_secret_key=os.environ.get("SCW_SECRET_KEY"),
-        scw_project_id=os.environ.get("SCW_DEFAULT_PROJECT_ID")
-        or os.environ.get("SCW_PROJECT_ID"),
-    )
-
-    if args.dry_run:
-        # hors-ligne : provider=None → le plan suppose un compte vierge.
-        print(render(build_plan(extracted, target)))
-        return
-
-    # apply réel : credentials Scaleway requis (compte DU CLIENT).
-    creds = target.scw_access_key and target.scw_secret_key and target.scw_project_id
-    if not creds:
-        raise SystemExit(
-            "vignemale deploy: pose SCW_ACCESS_KEY / SCW_SECRET_KEY / "
-            "SCW_DEFAULT_PROJECT_ID (compte Scaleway cible), ou utilise --dry-run."
-        )
-    if not args.image:
-        raise SystemExit(
-            "vignemale deploy: --image requis (ref poussée au Container Registry). "
-            "`vignemale build` puis pousse l'image, ou --dry-run pour voir le plan."
-        )
-
-    from vignemale_deploy import ScalewayProvider, apply_plan
-
-    provider = ScalewayProvider(target)
-    # montre le plan réel (lookup) puis demande confirmation — ressources facturables.
-    plan = build_plan(extracted, target, provider)
-    print(render(plan))
-    if not args.yes:
-        ans = input("\nAppliquer ce plan dans le compte Scaleway ? [oui/N] ").strip().lower()
-        if ans not in ("oui", "o", "yes", "y"):
-            raise SystemExit("vignemale deploy: annulé.")
-
-    # valeurs de secrets : depuis l'env VIGNEMALE_SECRET_<NOM> au moment du deploy.
-    secret_values = {}
-    for name in extracted.get("secrets") or []:
-        env_name = f"VIGNEMALE_SECRET_{name.upper().replace('-', '_')}"
-        if env_name in os.environ:
-            secret_values[name] = os.environ[env_name]
-
-    def _migrate_prod(dsns):
-        """Schéma + pgvector contre la base managée, depuis la machine de deploy.
-
-        Pose les DSN, réveille la base (retries cold-start), active pgvector, puis
-        charge l'app (exécute son bootstrap de schéma top-level) et applique les
-        migrations des SQLDatabase(migrations=…)."""
-        import time as _t
-
-        from vignemale import _core
-
-        for name, dsn in dsns.items():
-            os.environ[f"VIGNEMALE_SQLDB_{name.upper().replace('-', '_')}"] = dsn
-            for attempt in range(12):  # réveil base serverless (cold start)
-                try:
-                    _core.sqldb_query(dsn, "SELECT 1", "[]")
-                    break
-                except Exception:
-                    _t.sleep(5)
-            try:
-                _core.sqldb_execute(dsn, "CREATE EXTENSION IF NOT EXISTS vector", "[]")
-            except Exception as e:
-                print(f"  (pgvector non activé sur « {name} » : {e})")
-        _load_app(args.path)  # exécute le bootstrap de schéma (ex. CREATE TABLE)
-        _migrate(args.path)   # applique les SQLDatabase(migrations=…)
-
-    dep = apply_plan(
-        extracted, target, provider, secret_values,
-        on_progress=lambda m: print("  " + m),
-        on_databases_ready=_migrate_prod,
-    )
-    print(f"\nvignemale: « {dep.app} » déployé sur {dep.env}.")
-    if dep.url:
-        print(f"  URL : {dep.url}")
-
-
 def cmd_build(args):
     from .build import build
 
@@ -422,25 +332,6 @@ def main(argv=None):
         "--print", action="store_true", help="affiche le Dockerfile sans builder"
     )
     p_build.set_defaults(func=cmd_build)
-
-    p_deploy = sub.add_parser(
-        "deploy", help="déploie l'app sur Scaleway (control plane) — pour l'instant --dry-run"
-    )
-    p_deploy.add_argument("path", help="fichier ou dossier de l'app")
-    p_deploy.add_argument("--env", default="prod", help="environnement (défaut: prod)")
-    p_deploy.add_argument("--region", default="fr-par", help="région Scaleway (défaut: fr-par)")
-    p_deploy.add_argument("--image", help="ref/digest de l'image d'app (vignemale build)")
-    p_deploy.add_argument(
-        "--db", choices=["serverless", "managed"], default="serverless",
-        help="backend base de données : serverless (scale-to-zero, défaut) ou managed",
-    )
-    p_deploy.add_argument(
-        "--dry-run", action="store_true", help="montre le plan de déploiement sans rien créer"
-    )
-    p_deploy.add_argument(
-        "--yes", action="store_true", help="applique sans demander confirmation"
-    )
-    p_deploy.set_defaults(func=cmd_deploy)
 
     p_rgpd = sub.add_parser(
         "rgpd", help="données personnelles : map (carte) · export · forget"
