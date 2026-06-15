@@ -232,6 +232,17 @@ Avantages : mêmes deps que la prod, pas de couplage laptop, idempotent, tracé.
 (1) et (2) dérisquent la fondation Go sans encore opérer le serveur ni la build
 farm. (3) introduit la build farm. (4-5) montent le control plane autour.
 
+## 7bis. Découpage en dépôts (open-core)
+DÉCIDÉ : modèle **open-core**, deux dépôts.
+- **`vignemale` (ce dépôt, open-source, MPL prévu)** : le runtime (cœur Rust +
+  SDK Python), la CLI dev (`run`/`check`/`gen`/`build`), `vignemale-deploy` (le
+  PoC Python qui sert de spec), la doc. Ce que l'utilisateur installe.
+- **`vignemale-cloud` (NOUVEAU, privé)** : le **moteur Go** (reconciler sur
+  `scaleway-sdk-go`), le **control plane** (API, jobs, git-receive, build
+  service), le **panel web**. Le produit commercial — jamais publié.
+Le contrat entre les deux = le **`meta` proto** (produit côté open-source par
+`collect`, consommé côté privé par le moteur Go).
+
 ## 8. Questions ouvertes
 - **Bootstrap** : le control plane Go se déploie **à la main sur Scaleway**
   (décidé — pas de dépendance circulaire à Vignemale). Simple instance/conteneur
@@ -240,9 +251,9 @@ farm. (3) introduit la build farm. (4-5) montent le control plane autour.
   Kapsule, ou Serverless Job avec BuildKit rootless). DinD/cache/sécurité à
   cadrer. C'est le composant le plus lourd à opérer.
 - **CLI cloud : Go ou Python ?** (le dev local reste Python). À trancher.
-- **Réception du `git push vignemale`** : le control plane héberge un remote git
-  (smart-HTTP `git-receive-pack` → déclenche le build), ou un dépôt Vignemale par
-  app avec hook. Mécanisme à cadrer.
+- **Réception du `git push vignemale`** : DÉCIDÉ — **le control plane héberge le
+  remote git** (smart-HTTP `git-receive-pack`, façon Heroku) ; le push déclenche
+  le build. `vignemale login` pose ce remote.
 - **Notifications** : mail (SMTP/Scaleway TEM) au dev ; alerte panel au devops
   (in-app + mail/Slack optionnel).
 - **Rotation des creds/secrets** : politique et UX.
