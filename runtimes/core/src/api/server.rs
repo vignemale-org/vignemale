@@ -559,6 +559,8 @@ pub fn build_router(
                                 .to_string()
                         };
                         let caller = hdr("x-vignemale-caller");
+                        // identité propagée — lue AVANT la vérif car incluse dans la signature.
+                        let auth_header = hdr("x-vignemale-auth-data");
                         let mut finish = |resp: Response| {
                             tracing::info!(
                                 target: "vignemale::api",
@@ -588,6 +590,7 @@ pub fn build_router(
                             &caller,
                             &endpoint,
                             &body,
+                            auth_header.as_bytes(),
                             &hdr("x-vignemale-signature"),
                             super::svcauth::now_epoch(),
                         ) {
@@ -632,8 +635,8 @@ pub fn build_router(
                         };
 
                         // 4) auth propagée (les appels internes sont de confiance :
-                        //    pas de re-passage par l'auth handler, façon Encore)
-                        let auth_header = hdr("x-vignemale-auth-data");
+                        //    pas de re-passage par l'auth handler, façon Encore).
+                        //    `auth_header` a déjà été lu et couvert par la signature.
                         let auth_data = if requires_auth {
                             if auth_header.is_empty() {
                                 return finish(Response {

@@ -49,7 +49,15 @@ pub(crate) async fn handle(
         return err(500, "internal", "VIGNEMALE_SERVICE_SECRET requis pour la gateway");
     };
     let date = svcauth::now_epoch().to_string();
-    let sig = svcauth::sign(secret, &date, "gateway", &path, &body);
+    // l'identité propagée est signée à l'identique de l'en-tête (vide si absente)
+    let sig = svcauth::sign(
+        secret,
+        &date,
+        "gateway",
+        &path,
+        &body,
+        auth_data.as_deref().unwrap_or("").as_bytes(),
+    );
     let url = format!(
         "{}{}{}",
         route.upstream.trim_end_matches('/'),

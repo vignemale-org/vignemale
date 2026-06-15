@@ -81,9 +81,14 @@ def _call_local(service: str, endpoint: str, body, params):
 # --- mode déployé : HTTP signé sur la route interne ---
 
 
-def _sign(secret: str, date: str, caller: str, endpoint: str, payload: bytes) -> str:
+def _sign(
+    secret: str, date: str, caller: str, endpoint: str, payload: bytes, auth_data: bytes
+) -> str:
+    # auth_data (= en-tête x-vignemale-auth-data) inclus dans la signature, comme
+    # Encore lie l'identité propagée : empêche d'usurper une identité a posteriori.
     body_hash = hashlib.sha256(payload).hexdigest()
-    msg = f"{date}\n{caller}\n{endpoint}\n{body_hash}"
+    auth_hash = hashlib.sha256(auth_data).hexdigest()
+    msg = f"{date}\n{caller}\n{endpoint}\n{body_hash}\n{auth_hash}"
     return hmac_mod.new(secret.encode(), msg.encode(), hashlib.sha256).hexdigest()
 
 
@@ -110,15 +115,19 @@ def _call_http(base_url: str, service: str, endpoint: str, body, params):
     caller = os.environ.get("VIGNEMALE_SERVICE_NAME", "unknown")
     date = str(int(time.time()))
     ctx = _request_ctx.get() or {}
+    # l'identité propagée doit être signée à l'identique de l'en-tête (vide si absente)
+    auth_data = json.dumps(ctx["auth"]) if ctx.get("auth") is not None else ""
     headers = {
         "content-type": "application/json",
         "x-vignemale-date": date,
         "x-vignemale-caller": caller,
-        "x-vignemale-signature": _sign(secret, date, caller, endpoint, payload),
+        "x-vignemale-signature": _sign(
+            secret, date, caller, endpoint, payload, auth_data.encode()
+        ),
         "traceparent": _child_traceparent(ctx),
     }
-    if ctx.get("auth") is not None:
-        headers["x-vignemale-auth-data"] = json.dumps(ctx["auth"])
+    if auth_data:
+        headers["x-vignemale-auth-data"] = auth_data
 
     url = f"{base_url.rstrip('/')}/__vignemale/call/{endpoint}"
     req = urllib.request.Request(url, data=payload, headers=headers)
