@@ -17,6 +17,8 @@
 | Migrations | chargement de l'app en local | **job dans le compte client** (Serverless Job Go SDK) avec l'image de l'app |
 | Reconcile | `ensure_*` best-effort | **diff désiré/réel, lock, rollback, retries** |
 | Identité / équipe / billing | inexistants | **login, orgs/RBAC, audit, metering** |
+| Gouvernance | deploy = immédiat | **gate d'approbation devops** : plan revu + validé avant tout apply ; mail au dev |
+| Déclencheur deploy | CLI manuel | `vignemale deploy` **ou** `git push vignemale` |
 
 **Décision (15 juin 2026) : le moteur de déploiement et le control plane sont en
 Go.** Le `vignemale-deploy` Python qu'on a écrit était le **PoC qui a dérisqué le
@@ -46,8 +48,29 @@ plane Go ne consomme que le `meta` (proto, déjà language-agnostique) + l'image
                            Dashboard équipe (web) ──────────────┘
 ```
 Deux types de worker : **build** (a besoin de Python+griffe pour `collect` et de
-BuildKit pour l'image ; produit l'image + le `meta`) et **deploy** (Go pur :
-réconciliation Scaleway). Le `meta` (proto) est le contrat entre les deux.
+BuildKit pour l'image ; produit l'image + le `meta` + le plan) et **deploy** (Go
+pur : réconciliation Scaleway). Le `meta` (proto) est le contrat entre les deux.
+
+### 2.1 Le parcours (la vraie UX)
+
+**Développeur :**
+1. `uv add vignemale` — installe la lib dans son app.
+2. `vignemale login` — s'authentifie et **rattache l'app à son projet entreprise**
+   (org/env). Au passage, **initialise le remote git `vignemale`**.
+3. `vignemale run` — développe en local (l'agent tourne, infra locale auto).
+4. Déploie : `vignemale deploy` **ou** `git push vignemale`.
+
+**DevOps (panel admin) :**
+5. Reçoit une **notification** : « un dev a poussé sur le projet X ».
+6. Voit **exactement ce qui va être appliqué** : le diff des ressources + les
+   **paramètres configurés au niveau entreprise** (région, scaling, budget,
+   secrets, quotas).
+7. **Accepte ou refuse.**
+8. À l'acceptation : déploiement → **mail au dev** (succès + URL, ou échec).
+
+C'est une **gate de gouvernance** : rien n'atterrit sur le cloud sans qu'un
+responsable ait vu et validé le plan. Différenciateur entreprise fort (contrôle
++ visibilité + RGPD), et ça réutilise directement le **plan** du reconciler.
 
 **Modèle (rappel, décidé)** : BYOC + control plane managé qui facture. On déploie
 **toujours dans le compte Scaleway du client** (clé IAM déléguée qu'il connecte) ;
@@ -57,12 +80,14 @@ le control plane garde le contrôle (état, RBAC, secrets, audit) et facture le
 ## 3. Le control plane en détail
 
 ### 3.1 Responsabilités
-- Authentifier (users, orgs, tokens) et autoriser (RBAC).
+- Authentifier (users, orgs, tokens) et autoriser (**RBAC** : dev / devops / admin).
 - Détenir, **chiffrées**, les credentials cloud et les secrets applicatifs.
-- Recevoir une requête de deploy, l'exécuter de façon **asynchrone, idempotente,
-  reprenable**, et **streamer** la progression.
+- Recevoir un déclencheur (`vignemale deploy` ou `git push`), **builder**,
+  **calculer le plan**, puis le soumettre à la **gate d'approbation devops**.
+- Après approbation, exécuter le deploy de façon **asynchrone, idempotente,
+  reprenable**, **streamer** la progression, et **notifier** (mail dev).
 - Être la **source de vérité** : ce qui est déployé, où, dans quel état, avec
-  quel historique (rollback).
+  quel historique (rollback) et **quelle décision d'approbation** (audit).
 - Agréger l'observabilité ; mesurer l'usage (billing).
 
 ### 3.2 Composants
@@ -80,42 +105,58 @@ le control plane garde le contrôle (état, RBAC, secrets, audit) et facture le
 ### 3.3 Cycle de vie d'un deploy
 
 ```
-CLI: vignemale deploy --env prod              (token Bearer)
-  └─ pousse le SOURCE (tarball ou ref git) au control plane
-  └─ POST /apps/{app}/envs/{env}/deploys { source, config }
+DÉCLENCHEUR (au choix) :
+  vignemale deploy             → pousse le SOURCE au control plane
+  git push vignemale           → le remote « vignemale » (posé au login) reçoit le push
         └─ control plane : deployments(status=queued) + enqueue BUILD job → {deploy_id}
-  └─ GET /deploys/{id}/events  (SSE: stream des steps)
 
 BUILD worker (Python collect + BuildKit) :
   b1. collect (griffe) → meta (proto)                      [extraction statique]
   b2. docker build (amd64 natif) → push registre client → image_digest
-  b3. enqueue DEPLOY job { meta, image_digest }
+  b3. PLAN = reconcile(meta vs état+Scaleway, fusionné avec la CONFIG ENTREPRISE)
+            [diff create/update/delete + params org : région, scaling, budget, secrets]
+  b4. status = pending_approval → NOTIFIE le panel admin (le devops)
+
+GATE D'APPROBATION (humaine) :
+  le devops voit dans le panel : le diff exact + les paramètres entreprise appliqués
+  ├─ REJETÉ   → status=rejected, mail au dev (raison)
+  └─ APPROUVÉ → enqueue DEPLOY job
 
 DEPLOY worker (Go) :
   1. lock advisory sur (env_id)        ← un seul deploy concurrent par env
   2. charge creds client (déchiffre) + état (table resources)
-  3. PLAN = reconcile(meta désiré vs état+Scaleway)        [diff: create/update/noop/delete]
-  4. APPLY ressources (DB serverless, buckets, secrets)    [idempotent, IDs → table resources]
-  5. MIGRATE : Serverless Job dans le compte client, image de l'app, `vignemale migrate`
-  6. ROLLOUT container (nouvelle révision) → health check
-  7. bascule trafic → status=succeeded   (sinon ROLLBACK révision précédente, status=failed)
-  8. release lock ; chaque étape écrite dans deployment_steps (→ SSE)
+  3. APPLY ressources (DB serverless, buckets, secrets)    [idempotent, IDs → table resources]
+  4. MIGRATE : Serverless Job dans le compte client, image de l'app, `vignemale migrate`
+  5. ROLLOUT container (nouvelle révision) → health check
+  6. bascule trafic → status=succeeded   (sinon ROLLBACK révision précédente, status=failed)
+  7. release lock ; steps écrits en continu (→ SSE panel) ; MAIL au dev (succès/échec + URL)
 ```
+Le **plan est calculé AVANT l'approbation** (fin du build) : c'est lui que le
+devops review. La **config entreprise** (région autorisée, scaling, budget,
+secrets, quotas) est définie au niveau org/env et **fusionnée** avec ce que l'app
+déclare — l'app exprime l'intention, l'org cadre. **Politique d'approbation
+configurable** par env (ex. prod = approbation requise, staging = auto).
 
 ### 3.4 Modèle de données (esquisse Postgres)
 ```
 orgs(id, name, plan)                       users(id, email)
-memberships(user_id, org_id, role)         api_tokens(id, org_id, hash, scopes)
+memberships(user_id, org_id, role)         api_tokens(id, org_id, hash, scopes)  -- role: dev | devops | admin
 cloud_credentials(id, org_id, provider, enc_blob, scopes)   -- clé IAM client chiffrée
-apps(id, org_id, name)
-environments(id, app_id, name, region, db_backend)
+apps(id, org_id, name, git_repo)                            -- git_repo : remote « vignemale »
+environments(id, app_id, name, region, db_backend, approval_required)  -- prod=true, staging=false
+env_config(env_id, key, value)            -- params ENTREPRISE : région, scaling, budget, quotas…
 secrets(id, env_id, name, enc_value, version)               -- chiffrés
 resources(id, env_id, kind, logical_name, provider_id, meta)-- registre des ressources Scaleway
-deployments(id, env_id, image_digest, meta_json, status, created_by, created_at, finished_at, error)
-deployment_steps(id, deployment_id, seq, name, status, message, ts)   -- progression (SSE)
+deployments(id, env_id, source_ref, image_digest, meta_json, plan_json, status, created_by, created_at, finished_at, error)
+   -- status: queued→building→pending_approval→(approved|rejected)→deploying→(succeeded|failed)
+approvals(id, deployment_id, decided_by, decision, reason, ts)         -- la gate devops
+deployment_steps(id, deployment_id, seq, name, status, message, ts)    -- progression (SSE)
+notifications(id, deployment_id, kind, to, status, ts)                 -- mail dev / alerte panel
 jobs(id, type, payload, status, attempts, run_after, locked_by, locked_at)  -- file SKIP LOCKED
 audit_log(id, org_id, actor, action, target, ts)
 ```
+`plan_json` (le diff calculé au build) est ce que le devops review ; `approvals`
+trace la décision ; `env_config` porte les paramètres entreprise fusionnés au plan.
 La table `resources` remplace le fichier JSON local : elle porte les IDs Scaleway
 et le peu de secret non-récupérable (mot de passe RDB en mode managed ; le mode
 serverless par défaut n'en a pas, auth IAM).
@@ -139,11 +180,13 @@ serverless par défaut n'en a pas, auth IAM).
   précédente (Scaleway garde les révisions) ; les ressources créées restent (sûr).
 
 ## 4. Le CLI devient un client mince
-- `vignemale login` : device-flow OAuth → token dans `~/.vignemale/auth.json`.
-- `vignemale deploy` : build+push (v1) → POST au control plane → stream SSE.
+- `vignemale login` : device-flow OAuth → token dans `~/.vignemale/auth.json`,
+  rattache l'app au projet entreprise, et **pose le remote git `vignemale`**.
+- Déclencher un deploy : `vignemale deploy` (pousse le source) **ou** `git push
+  vignemale`. Les deux mènent à build → plan → approbation devops → deploy.
 - `vignemale secret set/list`, `vignemale logs`, `vignemale status`, `vignemale
   destroy` : appels API.
-- `--local` conservé : même moteur, sans serveur (self-hosted / open-source).
+- `--local` conservé : même moteur, sans serveur ni approbation (self-hosted / dev).
 
 ## 5. Migrations = job dans le compte client
 Au lieu de charger l'app sur la machine de deploy, le worker lance un **job
@@ -193,5 +236,10 @@ farm. (3) introduit la build farm. (4-5) montent le control plane autour.
   Kapsule, ou Serverless Job avec BuildKit rootless). DinD/cache/sécurité à
   cadrer. C'est le composant le plus lourd à opérer.
 - **CLI cloud : Go ou Python ?** (le dev local reste Python). À trancher.
+- **Réception du `git push vignemale`** : le control plane héberge un remote git
+  (smart-HTTP `git-receive-pack` → déclenche le build), ou un dépôt Vignemale par
+  app avec hook. Mécanisme à cadrer.
+- **Notifications** : mail (SMTP/Scaleway TEM) au dev ; alerte panel au devops
+  (in-app + mail/Slack optionnel).
 - **Rotation des creds/secrets** : politique et UX.
 - **Conformité RGPD** : croiser avec l'outillage `vignemale rgpd` déjà en place.
