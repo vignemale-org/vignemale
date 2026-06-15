@@ -1,0 +1,19 @@
+# Contexte de build Docker (image de base runtime) — exclut le lourd/inutile.
+target
+**/target
+.venv
+**/.venv
+**/__pycache__
+**/*.pyc
+**/*.so
+.pytest_cache
+**/.pytest_cache
+dist
+**/dist
+**/*.egg-info
+.git
+.github
+examples
+benchmark
+docs
+**/vignemale_clients

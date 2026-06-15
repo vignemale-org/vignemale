@@ -191,7 +191,13 @@ def cmd_gen(args):
 def cmd_build(args):
     from .build import build
 
-    build(args.path, tag=args.tag, print_only=args.print)
+    build(
+        args.path,
+        tag=args.tag,
+        print_only=args.print,
+        from_source=args.from_source,
+        base=args.base,
+    )
 
 
 def cmd_rgpd(args):
@@ -302,6 +308,17 @@ def main(argv=None):
     )
     p_build.add_argument("path", help="fichier ou dossier de l'app")
     p_build.add_argument("--tag", help="tag de l'image (défaut: vignemale-<app>:latest)")
+    p_build.add_argument(
+        "--base",
+        help="image de base runtime (défaut: ghcr.io/jacqkues/vignemale-python:latest "
+        "ou $VIGNEMALE_BASE_IMAGE)",
+    )
+    p_build.add_argument(
+        "--from-source",
+        dest="from_source",
+        action="store_true",
+        help="compile le runtime Rust dans l'image au lieu de partir de l'image de base",
+    )
     p_build.add_argument(
         "--print", action="store_true", help="affiche le Dockerfile sans builder"
     )
