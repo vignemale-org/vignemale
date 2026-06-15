@@ -105,9 +105,13 @@ jobs:
           packages-dir: dist
           repository-url: https://test.pypi.org/legacy/
 
-      # réel : sur tag vX.Y.Z, ou run manuel avec target=pypi
+      # réel : sur tag vX.Y.Z, ou run manuel avec target=pypi.
+      # Auth par token API (secret PYPI_API_TOKEN) — pas besoin de configurer le
+      # Trusted Publisher. À durcir plus tard : remplacer le token « compte » par
+      # un token « projet » (possible maintenant que vignemale existe sur PyPI).
       - name: publier sur PyPI
         if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.target == 'pypi')
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist
+          password: ${{ secrets.PYPI_API_TOKEN }}
