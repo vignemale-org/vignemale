@@ -109,7 +109,46 @@ Reco : tags + lookup (l'état vit dans Scaleway, source de vérité unique).
 Ordre : 1 et 2 d'abord (sans compte, dérisquent l'archi), puis 3-4 dès qu'un
 compte Scaleway est dispo.
 
+## 8. Outillage Scaleway — ne PAS réinventer la roue (analysé le 15 juin 2026)
+
+Analyse du GitHub Scaleway (github.com/scaleway). Décision : l'`apply` est de la
+**colle fine au-dessus du SDK Python officiel `scaleway`** (PyPI `scaleway`,
+v2.11, Apache-2.0, ~beta-stable). Il couvre TOUS nos produits, et notre moteur
+est déjà en Python (réutilisable tel quel par un control plane Python).
+
+| Ressource Vignemale | Module SDK | Méthodes clés (apply + idempotence + progress) |
+|---|---|---|
+| instance Managed DB | `rdb.v1` `RdbV1API` | `create_instance` / `wait_for_instance` / `list_instances` (lookup tags) / `get_instance_certificate` / `get_instance_metrics` (observ.) |
+| base logique | `rdb.v1` | `create_database` / `list_databases` / `create_user` / `list_privileges` |
+| bucket | **aucun module** → S3 | Object Storage = S3 pur : on **réutilise notre code Rust `aws-sdk-s3`** (`bucket_op`), pas de SDK Scaleway |
+| secret | `secret.v1beta1` `SecretV1Beta1API` | `create_secret` / `create_secret_version` / `access_secret_version` / `list_secrets` |
+| Serverless Container | `container.v1beta1` `ContainerV1Beta1API` | `create_namespace` / `create_container` / `update_container` / `deploy_container` / `wait_for_container` / `list_containers` (lookup) / `create_domain` |
+| Container Registry | `registry.v1` | namespace pour pousser l'image d'app |
+| IAM / creds | `iam.v1alpha1` | clés d'accès déléguées du client |
+| observabilité | `cockpit` | logs/métriques agrégés (argument de vente) |
+
+**SDK vs Terraform** : on garde le SDK (pas Terraform/Crossplane). Le SDK mappe
+1-pour-1 sur nos `Action`s, donne `wait_for_*` (→ stream de progression pour le
+log de deploy) et `list_*` (→ idempotence par tags, notre design). Terraform
+rajouterait génération HCL + binaire + backend d'état à gérer = réinventer le
+travail du control plane dans un autre outil.
+
+**Pattern d'orchestration** (repris de leur `serverless-api-framework-python`,
+qui vise les Functions mais montre la bonne séquence) : *get-or-create namespace
+→ create/update idempotent (lookup) → deploy → wait → nettoyage du périmé*.
+
+**Conséquence** : `ScalewayProvider.existing()` = `list_*` filtré par tags ;
+`apply()` = les `create_*`/`deploy_*` ci-dessus ; le control plane peut être en
+**Python** pour réutiliser `vignemale-deploy` + `scaleway` directement.
+
+### Repos Scaleway utiles
+- SDK Python `scaleway` (notre dépendance d'apply) : github.com/scaleway/scaleway-sdk-python
+- `scw` CLI (Go, fallback shell pour `--local`) : github.com/scaleway/scaleway-cli
+- `serverless-api-framework-python` (référence de flux deploy) : github.com/scaleway/serverless-api-framework-python
+- provider Terraform (écarté, mais réf. de mapping) : github.com/scaleway/terraform-provider-scaleway
+
 ## Sources
 - Serverless Containers : https://www.scaleway.com/en/developers/api/serverless-containers
 - Deploy container (API) : https://www.scaleway.com/en/docs/serverless-containers/api-cli/deploy-container-api/
 - Managed Database PostgreSQL : https://www.scaleway.com/en/developers/api/managed-database-postgre-mysql
+- SDK Python : https://github.com/scaleway/scaleway-sdk-python
