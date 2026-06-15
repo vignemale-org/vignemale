@@ -6,10 +6,28 @@ build-backend = "maturin"
 name = "vignemale"
 version = "0.1.0"
 description = "Vignemale — déploie tes agents IA en production sur Scaleway, depuis Python."
+readme = "README.md"
 requires-python = ">=3.9"
+license = { text = "MPL-2.0" }
+authors = [{ name = "Jacques Dumora", email = "jdumora-tw3@omneseducation.com" }]
+keywords = ["infrastructure-from-code", "ai-agents", "scaleway", "serverless", "deployment"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: Mozilla Public License 2.0 (MPL 2.0)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Rust",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Build Tools",
+    "Operating System :: OS Independent",
+]
 dependencies = [
     "pydantic>=2",      # validation des @api typés — l'UNIQUE dépendance prod
 ]
+
+[project.urls]
+Homepage = "https://github.com/vignemale-org/vignemale"
+Repository = "https://github.com/vignemale-org/vignemale"
+Issues = "https://github.com/vignemale-org/vignemale/issues"
 
 [project.optional-dependencies]
 # `vignemale[cli]` : l'outil dev (run/check/gen/build…). Séparé du runtime pour
