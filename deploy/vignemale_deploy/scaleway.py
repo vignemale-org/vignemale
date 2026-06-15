@@ -116,11 +116,17 @@ class ScalewayProvider:
                     project_id=target.scw_project_id,
                 )
                 db = api.wait_for_database(database_id=db.id)
-            host = db.endpoint
-            hostport = host if ":" in host else f"{host}:5432"
-            dsns[declared] = (
-                f"postgresql://{principal}:{secret}@{hostport}/{full}?sslmode=require"
-            )
+            # `endpoint` est une URI complète SANS credentials, ex :
+            #   postgres://<id>.pg.sdb.fr-par.scw.cloud:5432/<db>?sslmode=require
+            # → on injecte juste `principal:secret@` dans l'authority.
+            ep = db.endpoint
+            if "://" in ep:
+                scheme, rest = ep.split("://", 1)
+                dsns[declared] = f"{scheme}://{principal}:{secret}@{rest}"
+            else:  # fallback si l'API ne renvoyait qu'un host
+                dsns[declared] = (
+                    f"postgresql://{principal}:{secret}@{ep}:5432/{full}?sslmode=require"
+                )
         return dsns
 
     # ---- Managed Database (option --db managed) ----
