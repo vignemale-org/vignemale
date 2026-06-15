@@ -154,8 +154,16 @@ impl LazyS3Client {
         self.cell
             .get_or_init(|| async {
                 let region = aws_config::Region::new(self.cfg.region.clone());
-                let mut builder =
-                    aws_config::defaults(aws_config::BehaviorVersion::latest()).region(region);
+                // Client HTTP en rustls-ring (pas aws-lc-rs) : TLS pur Rust,
+                // wheels portables (cross-compilation aarch64 incluse).
+                let http_client = aws_smithy_http_client::Builder::new()
+                    .tls_provider(aws_smithy_http_client::tls::Provider::Rustls(
+                        aws_smithy_http_client::tls::rustls_provider::CryptoMode::Ring,
+                    ))
+                    .build_https();
+                let mut builder = aws_config::defaults(aws_config::BehaviorVersion::latest())
+                    .http_client(http_client)
+                    .region(region);
                 if let Some(endpoint) = self.cfg.endpoint.as_ref() {
                     builder = builder.endpoint_url(endpoint.clone());
                 }
