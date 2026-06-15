@@ -4,8 +4,37 @@
 
 use rust_decimal::prelude::FromPrimitive;
 use rust_decimal::Decimal;
-use tokio_postgres::types::{IsNull, Kind, ToSql, Type};
+use tokio_postgres::types::{FromSql, IsNull, Kind, ToSql, Type};
 use tokio_postgres::Row;
+
+/// Décodage du type `vector` de pgvector (embeddings/RAG).
+/// Format binaire : i16 dim, i16 inutilisé, puis dim × f32 big-endian.
+struct PgVector(Vec<f32>);
+
+impl<'a> FromSql<'a> for PgVector {
+    fn from_sql(
+        _ty: &Type,
+        raw: &'a [u8],
+    ) -> Result<Self, Box<dyn std::error::Error + Sync + Send>> {
+        if raw.len() < 4 {
+            return Err("vecteur pgvector tronqué".into());
+        }
+        let dim = i16::from_be_bytes([raw[0], raw[1]]) as usize;
+        let mut vals = Vec::with_capacity(dim);
+        for k in 0..dim {
+            let o = 4 + k * 4;
+            if o + 4 > raw.len() {
+                return Err("vecteur pgvector tronqué".into());
+            }
+            vals.push(f32::from_be_bytes([raw[o], raw[o + 1], raw[o + 2], raw[o + 3]]));
+        }
+        Ok(PgVector(vals))
+    }
+
+    fn accepts(ty: &Type) -> bool {
+        ty.name() == "vector"
+    }
+}
 
 /// Paramètre SQL venu du binding (valeur JSON).
 #[derive(Debug)]
@@ -178,6 +207,12 @@ fn col_to_json(row: &Row, i: usize, ty: &Type) -> anyhow::Result<serde_json::Val
             use base64::Engine as _;
             J::String(base64::engine::general_purpose::STANDARD.encode(v))
         }),
+        // pgvector : type custom (hors constantes tokio_postgres) → rendu en tableau.
+        ref other if other.name() == "vector" => {
+            opt(row.try_get::<_, Option<PgVector>>(i)?, |v| {
+                J::Array(v.0.into_iter().map(|f| J::from(f as f64)).collect())
+            })
+        }
         ref other => anyhow::bail!(
             "sqldb: type de colonne non supporté: {other} (colonne {})",
             row.columns()[i].name()
