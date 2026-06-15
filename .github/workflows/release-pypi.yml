@@ -53,9 +53,11 @@ jobs:
           target: ${{ matrix.target }}
           args: --release --out dist
           manylinux: auto
-          # conteneur manylinux : installe un protoc récent (avec les types
-          # bien-connus dans ../include) pour le build.rs/prost.
+          # conteneur manylinux : protoc récent (types bien-connus dans ../include)
+          # pour build.rs/prost. unzip n'est pas garanti dans le conteneur → on
+          # l'installe. (Plus besoin d'OpenSSL : la TLS Postgres est en rustls.)
           before-script-linux: |
+            (yum install -y unzip || dnf install -y unzip || microdnf install -y unzip) 2>/dev/null || true
             PB=28.3
             curl -sSLO https://github.com/protocolbuffers/protobuf/releases/download/v${PB}/protoc-${PB}-linux-x86_64.zip
             unzip -oq protoc-${PB}-linux-x86_64.zip -d /usr/local

@@ -17,23 +17,73 @@ fn env_u32(name: &str, default: u32) -> u32 {
         .unwrap_or(default)
 }
 
-/// Connecteur TLS (comme le manager d'Encore) : CA custom optionnelle,
-/// garde-fous dev. Le `sslmode` du DSN décide si TLS est utilisé.
-fn tls_connector() -> anyhow::Result<postgres_native_tls::MakeTlsConnector> {
-    let mut builder = native_tls::TlsConnector::builder();
-    if let Ok(path) = std::env::var("VIGNEMALE_SQLDB_CA_CERT") {
-        let pem = std::fs::read(&path)
-            .map_err(|e| anyhow::anyhow!("VIGNEMALE_SQLDB_CA_CERT ({path}): {e}"))?;
-        builder.add_root_certificate(
-            native_tls::Certificate::from_pem(&pem)
-                .map_err(|e| anyhow::anyhow!("certificat CA invalide: {e}"))?,
-        );
+/// Connecteur TLS en rustls : roots Mozilla (webpki-roots) par défaut, CA custom
+/// optionnelle (VIGNEMALE_SQLDB_CA_CERT), mode dev insecure
+/// (VIGNEMALE_SQLDB_TLS_INSECURE=1). Le `sslmode` du DSN décide si TLS est utilisé.
+fn tls_connector() -> anyhow::Result<tokio_postgres_rustls::MakeRustlsConnect> {
+    use std::sync::Arc;
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+
+    let config = if std::env::var("VIGNEMALE_SQLDB_TLS_INSECURE").is_ok_and(|v| v == "1") {
+        rustls::ClientConfig::builder_with_provider(provider.clone())
+            .with_safe_default_protocol_versions()?
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(InsecureVerifier(provider)))
+            .with_no_client_auth()
+    } else {
+        let mut roots = rustls::RootCertStore::empty();
+        roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        if let Ok(path) = std::env::var("VIGNEMALE_SQLDB_CA_CERT") {
+            let pem = std::fs::read(&path)
+                .map_err(|e| anyhow::anyhow!("VIGNEMALE_SQLDB_CA_CERT ({path}): {e}"))?;
+            for cert in rustls_pemfile::certs(&mut pem.as_slice()) {
+                roots
+                    .add(cert.map_err(|e| anyhow::anyhow!("CA PEM invalide: {e}"))?)
+                    .map_err(|e| anyhow::anyhow!("ajout CA: {e}"))?;
+            }
+        }
+        rustls::ClientConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()?
+            .with_root_certificates(roots)
+            .with_no_client_auth()
+    };
+    Ok(tokio_postgres_rustls::MakeRustlsConnect::new(config))
+}
+
+/// Vérificateur permissif pour le mode dev (VIGNEMALE_SQLDB_TLS_INSECURE).
+#[derive(Debug)]
+struct InsecureVerifier(std::sync::Arc<rustls::crypto::CryptoProvider>);
+
+impl rustls::client::danger::ServerCertVerifier for InsecureVerifier {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
+        _ocsp: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
     }
-    if std::env::var("VIGNEMALE_SQLDB_TLS_INSECURE").is_ok_and(|v| v == "1") {
-        builder.danger_accept_invalid_certs(true);
-        builder.danger_accept_invalid_hostnames(true);
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(message, cert, dss, &self.0.signature_verification_algorithms)
     }
-    Ok(postgres_native_tls::MakeTlsConnector::new(builder.build()?))
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(message, cert, dss, &self.0.signature_verification_algorithms)
+    }
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.0.signature_verification_algorithms.supported_schemes()
+    }
 }
 
 /// Renvoie (en le créant au besoin) le pool de connexions pour ce DSN.
