@@ -252,6 +252,17 @@ def build_meta(extracted: dict, app_name: str) -> "meta.Data":
         db = data.sql_databases.add()
         db.name = db_name
 
+    for bucket_name in extracted.get("buckets", []):
+        bucket = data.buckets.add()
+        bucket.name = bucket_name
+
+    secrets = extracted.get("secrets")
+    if secrets:
+        pkg = data.pkgs.add()
+        pkg.name = app_name
+        pkg.rel_path = "."
+        pkg.secrets.extend(secrets)
+
     auth = extracted.get("auth_handler")
     if auth:
         data.auth_handler.name = auth["name"]
