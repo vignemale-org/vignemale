@@ -243,7 +243,36 @@ def cmd_deploy(args):
         if env_name in os.environ:
             secret_values[name] = os.environ[env_name]
 
-    dep = apply_plan(extracted, target, provider, secret_values, on_progress=lambda m: print("  " + m))
+    def _migrate_prod(dsns):
+        """Schéma + pgvector contre la base managée, depuis la machine de deploy.
+
+        Pose les DSN, réveille la base (retries cold-start), active pgvector, puis
+        charge l'app (exécute son bootstrap de schéma top-level) et applique les
+        migrations des SQLDatabase(migrations=…)."""
+        import time as _t
+
+        from vignemale import _core
+
+        for name, dsn in dsns.items():
+            os.environ[f"VIGNEMALE_SQLDB_{name.upper().replace('-', '_')}"] = dsn
+            for attempt in range(12):  # réveil base serverless (cold start)
+                try:
+                    _core.sqldb_query(dsn, "SELECT 1", "[]")
+                    break
+                except Exception:
+                    _t.sleep(5)
+            try:
+                _core.sqldb_execute(dsn, "CREATE EXTENSION IF NOT EXISTS vector", "[]")
+            except Exception as e:
+                print(f"  (pgvector non activé sur « {name} » : {e})")
+        _load_app(args.path)  # exécute le bootstrap de schéma (ex. CREATE TABLE)
+        _migrate(args.path)   # applique les SQLDatabase(migrations=…)
+
+    dep = apply_plan(
+        extracted, target, provider, secret_values,
+        on_progress=lambda m: print("  " + m),
+        on_databases_ready=_migrate_prod,
+    )
     print(f"\nvignemale: « {dep.app} » déployé sur {dep.env}.")
     if dep.url:
         print(f"  URL : {dep.url}")

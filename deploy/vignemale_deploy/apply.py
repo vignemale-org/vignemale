@@ -64,8 +64,15 @@ def apply_plan(
     provider: Provider,
     secret_values: Dict[str, str] = None,
     on_progress: Callable[[str], None] = None,
+    on_databases_ready: Callable[[Dict[str, str]], None] = None,
 ) -> Deployment:
-    """Réconcilie l'infra puis déploie le container. Idempotent (ensure_*)."""
+    """Réconcilie l'infra puis déploie le container. Idempotent (ensure_*).
+
+    `on_databases_ready(dsns)` est appelé APRÈS la création des bases et AVANT le
+    déploiement du container : c'est la fenêtre des migrations (créer le schéma,
+    activer pgvector, réveiller la base serverless) pour que le container serve
+    une base prête. Découplé du runtime (le CLI fournit ce hook).
+    """
     secret_values = secret_values or {}
     log = on_progress or (lambda _m: None)
     dep = Deployment(app=target.app, env=target.env)
@@ -83,6 +90,10 @@ def apply_plan(
         log(f"Bases ({target.db_backend}) : {', '.join(databases)}…")
         dsns = provider.ensure_databases(target, databases)
         dep.steps.extend(f"base {d}" for d in databases)
+        if on_databases_ready is not None:
+            log("Migrations (schéma + pgvector)…")
+            on_databases_ready(dsns)
+            dep.steps.append("migrations appliquées")
 
     # 2) Object Storage (S3).
     for bucket in meta.get("buckets") or []:
