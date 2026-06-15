@@ -209,6 +209,7 @@ def api(
     path: str,
     stream: bool = False,
     auth: bool = False,
+    expose: bool = True,
     timeout: float = None,
     body_limit: int = None,
 ) -> Callable:
@@ -221,6 +222,9 @@ def api(
     - `stream=True` : le handler reçoit `stream` et pousse des fragments (SSE).
     - `auth=True` : la requête passe d'abord par le `@auth_handler` de l'app
       (sinon → 401 `unauthenticated`) ; le handler reçoit `auth` s'il le déclare.
+    - `expose=False` (PRIVATE) : l'endpoint n'est PAS exposé publiquement — il
+      n'est joignable qu'en service-à-service via `call()` (route interne signée).
+      Un appel externe reçoit 404. Défaut : exposé (`True`).
     - `timeout` (secondes) : au-delà → 504 `deadline_exceeded` (le handler
       finit en arrière-plan, ses logs sont conservés). Défaut :
       `VIGNEMALE_REQUEST_TIMEOUT` (30 s ; 0 = désactivé). Ignoré en streaming.
@@ -281,7 +285,7 @@ def api(
         if auth:
             _auth_required.append(func.__name__)
         _endpoints.append(
-            (func.__name__, method.upper(), path, wrapper, stream, auth, timeout, body_limit)
+            (func.__name__, method.upper(), path, wrapper, stream, auth, timeout, body_limit, expose)
         )
         return func  # on renvoie la fonction typée d'origine (pour pyright)
 

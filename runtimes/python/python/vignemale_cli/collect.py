@@ -132,6 +132,7 @@ def _extract_module(mod) -> tuple:
                     "path": kw.get("path"),
                     "stream": bool(kw.get("stream", False)),
                     "auth": bool(kw.get("auth", False)),
+                    "expose": bool(kw.get("expose", True)),
                     "request": request,
                     "response": str(m.returns) if m.returns is not None else None,
                     "params": {
@@ -277,7 +278,14 @@ def build_meta(extracted: dict, app_name: str) -> "meta.Data":
             rpc = svc.rpcs.add()
             rpc.name = ep["name"]
             rpc.service_name = svc_info["name"]
-            rpc.access_type = meta.RPC.AUTH if ep.get("auth") else meta.RPC.PUBLIC
+            # PRIVATE prime : un endpoint non exposé n'est jamais public, même
+            # avec auth (il n'est joignable qu'en service-à-service).
+            if not ep.get("expose", True):
+                rpc.access_type = meta.RPC.PRIVATE
+            elif ep.get("auth"):
+                rpc.access_type = meta.RPC.AUTH
+            else:
+                rpc.access_type = meta.RPC.PUBLIC
             rpc.proto = meta.RPC.REGULAR
             if ep["method"]:
                 rpc.http_methods.append(ep["method"])

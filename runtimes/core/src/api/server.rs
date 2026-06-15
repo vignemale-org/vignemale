@@ -327,6 +327,11 @@ pub fn build_router(
 
     let mut app = Router::new();
     for (ep, kind) in endpoints {
+        // PRIVATE (expose=false) : pas de route publique. L'endpoint reste dans
+        // la map `internal` ci-dessus → joignable seulement via `call()` signé.
+        if !ep.expose {
+            continue;
+        }
         let filter = method_filter(&ep.method)
             .ok_or_else(|| anyhow::anyhow!("méthode HTTP non supportée: {}", ep.method))?;
         let (name, method, path) = (Arc::<str>::from(ep.name), ep.method, ep.path);

@@ -760,6 +760,7 @@ fn serve(
         bool,
         Option<f64>,
         Option<u64>,
+        bool,
     )>,
     addr: String,
     auth_handler: Option<Py<PyAny>>,
@@ -770,7 +771,8 @@ fn serve(
         .parse()
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("adresse invalide: {e}")))?;
     let mut mgr = api::Manager::new();
-    for (name, method, path, func, stream, requires_auth, timeout_s, body_limit) in endpoints {
+    for (name, method, path, func, stream, requires_auth, timeout_s, body_limit, expose) in endpoints
+    {
         let kind = if stream {
             api::HandlerKind::Stream(Arc::new(PyStreamHandler { func }))
         } else {
@@ -782,6 +784,7 @@ fn serve(
                 method,
                 path,
                 requires_auth,
+                expose,
                 timeout_ms: timeout_s.map(|s| (s * 1000.0) as u64),
                 body_limit,
             },
