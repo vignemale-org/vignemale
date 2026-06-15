@@ -33,10 +33,62 @@ pub fn sign(
     hex::encode(mac.finalize().into_bytes())
 }
 
-/// Vérifie la signature d'un appel interne (comparaison à temps constant).
+/// Secrets acceptés en vérification, depuis l'environnement : le secret courant
+/// (`VIGNEMALE_SERVICE_SECRET`) + d'éventuels précédents
+/// (`VIGNEMALE_SERVICE_SECRET_PREVIOUS`, séparés par des virgules). Permet la
+/// **rotation sans coupure** : on déploie le nouveau comme courant en gardant
+/// l'ancien en « précédent », puis on retire l'ancien une fois tous les
+/// services à jour. (Encore utilise des clés à `key_id` rotatif ; on simplifie
+/// en acceptant un jeu de secrets — le signataire utilise toujours le courant.)
+pub fn accepted_secrets_from_env() -> Vec<String> {
+    let mut secrets = Vec::new();
+    if let Ok(s) = std::env::var("VIGNEMALE_SERVICE_SECRET") {
+        if !s.is_empty() {
+            secrets.push(s);
+        }
+    }
+    if let Ok(prev) = std::env::var("VIGNEMALE_SERVICE_SECRET_PREVIOUS") {
+        for s in prev.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+            secrets.push(s.to_string());
+        }
+    }
+    secrets
+}
+
+/// Compare deux signatures hex à temps constant.
+fn ct_eq(a: &str, b: &str) -> bool {
+    a.len() == b.len()
+        && a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+/// Vérifie la signature contre UN secret (comparaison à temps constant).
 #[allow(clippy::too_many_arguments)]
 pub fn verify(
     secret: &str,
+    date: &str,
+    caller: &str,
+    endpoint: &str,
+    body: &[u8],
+    auth_data: &[u8],
+    signature: &str,
+    now_epoch: i64,
+) -> Result<(), &'static str> {
+    verify_any(
+        std::slice::from_ref(&secret),
+        date,
+        caller,
+        endpoint,
+        body,
+        auth_data,
+        signature,
+        now_epoch,
+    )
+}
+
+/// Vérifie contre un JEU de secrets (courant + précédents) — pour la rotation.
+#[allow(clippy::too_many_arguments)]
+pub fn verify_any<S: AsRef<str>>(
+    secrets: &[S],
     date: &str,
     caller: &str,
     endpoint: &str,
@@ -49,18 +101,13 @@ pub fn verify(
     if (now_epoch - ts).abs() > MAX_SKEW_SECS {
         return Err("date hors tolérance (rejeu ?)");
     }
-    let expected = sign(secret, date, caller, endpoint, body, auth_data);
-    let same = expected.len() == signature.len()
-        && expected
-            .bytes()
-            .zip(signature.bytes())
-            .fold(0u8, |acc, (a, b)| acc | (a ^ b))
-            == 0;
-    if same {
-        Ok(())
-    } else {
-        Err("signature invalide")
+    for secret in secrets {
+        let expected = sign(secret.as_ref(), date, caller, endpoint, body, auth_data);
+        if ct_eq(&expected, signature) {
+            return Ok(());
+        }
     }
+    Err("signature invalide")
 }
 
 pub fn now_epoch() -> i64 {
@@ -107,6 +154,17 @@ mod tests {
             sig,
             "35bd9fc5e57d92ee91952301516314311947ed66bf8e5bde5b83b816aab5dbe6"
         );
+    }
+
+    #[test]
+    fn rotation_accepts_previous_secret() {
+        // signé avec l'ancien secret ; pendant la rotation le vérificateur
+        // accepte [nouveau, ancien] → OK. Avec le seul nouveau → rejeté.
+        let sig = sign("ancien", "1000", "orders", "get_item", b"{}", b"");
+        let both = ["nouveau".to_string(), "ancien".to_string()];
+        assert!(verify_any(&both, "1000", "orders", "get_item", b"{}", b"", &sig, 1010).is_ok());
+        let only_new = ["nouveau".to_string()];
+        assert!(verify_any(&only_new, "1000", "orders", "get_item", b"{}", b"", &sig, 1010).is_err());
     }
 
     #[test]

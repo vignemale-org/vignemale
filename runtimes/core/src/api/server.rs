@@ -573,8 +573,9 @@ pub fn build_router(
                             deny_response(resp, &request_id)
                         };
 
-                        // 1) signature obligatoire
-                        let Ok(secret) = std::env::var("VIGNEMALE_SERVICE_SECRET") else {
+                        // 1) signature obligatoire (jeu de secrets : rotation sans coupure)
+                        let secrets = super::svcauth::accepted_secrets_from_env();
+                        if secrets.is_empty() {
                             return finish(Response {
                                 status: 401,
                                 body: error_json(
@@ -583,9 +584,9 @@ pub fn build_router(
                                     None,
                                 ),
                             });
-                        };
-                        if let Err(reason) = super::svcauth::verify(
-                            &secret,
+                        }
+                        if let Err(reason) = super::svcauth::verify_any(
+                            &secrets,
                             &hdr("x-vignemale-date"),
                             &caller,
                             &endpoint,
