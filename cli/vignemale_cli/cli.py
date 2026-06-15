@@ -188,6 +188,12 @@ def cmd_gen(args):
         print(f"vignemale: écrit {f}")
 
 
+def cmd_build(args):
+    from .build import build
+
+    build(args.path, tag=args.tag, print_only=args.print)
+
+
 def cmd_rgpd(args):
     import json as _json
 
@@ -290,6 +296,16 @@ def main(argv=None):
     )
     p_gen.add_argument("path", help="fichier ou dossier de l'app")
     p_gen.set_defaults(func=cmd_gen)
+
+    p_build = sub.add_parser(
+        "build", help="construit l'image Docker de l'app (Dockerfile généré)"
+    )
+    p_build.add_argument("path", help="fichier ou dossier de l'app")
+    p_build.add_argument("--tag", help="tag de l'image (défaut: vignemale-<app>:latest)")
+    p_build.add_argument(
+        "--print", action="store_true", help="affiche le Dockerfile sans builder"
+    )
+    p_build.set_defaults(func=cmd_build)
 
     p_rgpd = sub.add_parser(
         "rgpd", help="données personnelles : map (carte) · export · forget"
