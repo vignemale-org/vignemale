@@ -17,7 +17,7 @@
 | Migrations | chargement de l'app en local | **job dans le compte client** (Serverless Job Go SDK) avec l'image de l'app |
 | Reconcile | `ensure_*` best-effort | **diff désiré/réel, lock, rollback, retries** |
 | Identité / équipe / billing | inexistants | **login, orgs/RBAC, audit, metering** |
-| Gouvernance | deploy = immédiat | **gate d'approbation devops** : plan revu + validé avant tout apply ; mail au dev |
+| Gouvernance | deploy = immédiat | **approbation devops SYSTÉMATIQUE** (panel web Vignemale) : plan revu + validé avant tout apply ; mail au dev |
 | Déclencheur deploy | CLI manuel | `vignemale deploy` **ou** `git push vignemale` |
 
 **Décision (15 juin 2026) : le moteur de déploiement et le control plane sont en
@@ -45,7 +45,7 @@ plane Go ne consomme que le `meta` (proto, déjà language-agnostique) + l'image
  └─────────┘  (logs)     │   └─► DEPLOY worker (Go) ─► reconcile │délég.  Serverless Job (migrations)
                          │  Secrets/creds chiffrés · RBAC        │    └────────────────────────┘
                          └────────────────────────────────────┘
-                           Dashboard équipe (web) ──────────────┘
+         Panel admin web (NOTRE produit SaaS : approbation + gestion) ─────┘
 ```
 Deux types de worker : **build** (a besoin de Python+griffe pour `collect` et de
 BuildKit pour l'image ; produit l'image + le `meta` + le plan) et **deploy** (Go
@@ -100,7 +100,10 @@ le control plane garde le contrôle (état, RBAC, secrets, audit) et facture le
    écrit la progression (steps) lue par l'API en SSE.
 6. **Secrets/creds** : chiffrement enveloppe (clé maître → clés data), déchiffrés
    *juste-à-temps* par le worker pour l'injection container. Jamais exposés au CLI.
-7. **Dashboard** (web) : apps, envs, deploys, secrets, logs, membres.
+7. **Panel admin** = **NOTRE produit web hébergé** (l'UI SaaS de Vignemale Cloud) :
+   le devops y reçoit les notifications, **review le plan + les params entreprise,
+   approuve/refuse**, et gère apps/envs/secrets/logs/membres. C'est la face visible
+   du control plane (le CLI ne fait que dev + déclencher).
 
 ### 3.3 Cycle de vie d'un deploy
 
@@ -134,8 +137,9 @@ DEPLOY worker (Go) :
 Le **plan est calculé AVANT l'approbation** (fin du build) : c'est lui que le
 devops review. La **config entreprise** (région autorisée, scaling, budget,
 secrets, quotas) est définie au niveau org/env et **fusionnée** avec ce que l'app
-déclare — l'app exprime l'intention, l'org cadre. **Politique d'approbation
-configurable** par env (ex. prod = approbation requise, staging = auto).
+déclare — l'app exprime l'intention, l'org cadre. **L'approbation est SYSTÉMATIQUE**
+(décidé) : tout deploy, quel que soit l'env, passe par `pending_approval` — pas de
+bypass. C'est la garantie de gouvernance.
 
 ### 3.4 Modèle de données (esquisse Postgres)
 ```
@@ -143,7 +147,7 @@ orgs(id, name, plan)                       users(id, email)
 memberships(user_id, org_id, role)         api_tokens(id, org_id, hash, scopes)  -- role: dev | devops | admin
 cloud_credentials(id, org_id, provider, enc_blob, scopes)   -- clé IAM client chiffrée
 apps(id, org_id, name, git_repo)                            -- git_repo : remote « vignemale »
-environments(id, app_id, name, region, db_backend, approval_required)  -- prod=true, staging=false
+environments(id, app_id, name, region, db_backend)          -- approbation systématique (pas de flag)
 env_config(env_id, key, value)            -- params ENTREPRISE : région, scaling, budget, quotas…
 secrets(id, env_id, name, enc_value, version)               -- chiffrés
 resources(id, env_id, kind, logical_name, provider_id, meta)-- registre des ressources Scaleway
