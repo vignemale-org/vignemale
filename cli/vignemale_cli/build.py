@@ -25,7 +25,7 @@ import tempfile
 # Image de base par défaut (runtime pré-compilé, publiée en CI sur GHCR).
 # Surchargeable via --base ou VIGNEMALE_BASE_IMAGE.
 DEFAULT_BASE_IMAGE = os.environ.get(
-    "VIGNEMALE_BASE_IMAGE", "ghcr.io/jacqkues/vignemale-python:latest"
+    "VIGNEMALE_BASE_IMAGE", "ghcr.io/vignemale-org/vignemale-python:latest"
 )
 
 # Parties de la source vignemale nécessaires pour compiler le wheel (--from-source).

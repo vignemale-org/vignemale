@@ -2,7 +2,7 @@
 #
 # Image de base Vignemale : le RUNTIME (cœur Rust + SDK Python) déjà compilé.
 # Publiée en CI, multi-arch (linux/amd64 + linux/arm64), sur GHCR :
-#   ghcr.io/jacqkues/vignemale-python:latest
+#   ghcr.io/vignemale-org/vignemale-python:latest
 #
 # `vignemale build <app>` part de cette image et ne fait que copier le code de
 # l'app → build en quelques secondes (plus de compilation Rust côté utilisateur),

@@ -402,7 +402,7 @@ def main(argv=None):
     p_build.add_argument("--tag", help="tag de l'image (défaut: vignemale-<app>:latest)")
     p_build.add_argument(
         "--base",
-        help="image de base runtime (défaut: ghcr.io/jacqkues/vignemale-python:latest "
+        help="image de base runtime (défaut: ghcr.io/vignemale-org/vignemale-python:latest "
         "ou $VIGNEMALE_BASE_IMAGE)",
     )
     p_build.add_argument(
