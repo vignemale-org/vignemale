@@ -1,17 +1,19 @@
 """Provider Scaleway : exécute le plan via le SDK officiel `scaleway`.
 
 Colle fine au-dessus du SDK (cf. docs/phase4-deploy.md §8) :
-  rdb.v1        → instance Managed PostgreSQL + bases logiques
-  container.v1beta1 → namespace + container + deploy
-  Object Storage → S3 pur via boto3 (pas de module SDK)
+  serverless_sqldb.v1alpha1 → Serverless SQL Database (DÉFAUT, scale-to-zero)
+  rdb.v1                     → Managed Database (option --db managed)
+  container.v1beta1          → namespace + container + deploy
+  Object Storage             → S3 pur via boto3
 
-Idempotence par tags `vignemale-app=<app>` + `vignemale-env=<env>` et lookup
-`list_*`. Le mot de passe de l'instance n'étant PAS récupérable après création,
-on persiste un petit état local (`~/.vignemale/deploy-state/<app>-<env>.json`) —
-le control plane remplacera ce fichier par sa base Postgres.
+Bases :
+  - serverless : `create_database(cpu_min=0,…)`, auth IAM (user = id du principal
+    de la clé API, password = clé secrète) → DSN reconstructible, AUCUN état local.
+  - managed    : instance partagée + bases logiques ; le mot de passe n'étant pas
+    récupérable, on le persiste dans `~/.vignemale/deploy-state/`.
 
-⚠ Les valeurs marquées « VERIFY » (version d'engine, type de nœud, unité de
-volume) sont à confirmer au premier apply réel contre le compte.
+Idempotence : par nom (`vignemale-<app>-<env>-<db>` pour le serverless) ou par
+tags (`vignemale-app/env` pour instances RDB et containers).
 """
 
 import json
@@ -23,7 +25,7 @@ from typing import Dict, Set, Tuple
 
 from .model import Target, DbEndpoint
 
-# Réglages par défaut de l'instance Managed Database (surchargables par env).
+# --- Managed Database (option) ---
 _DB_ENGINE = os.environ.get("VIGNEMALE_SCW_DB_ENGINE", "PostgreSQL-15")  # VERIFY
 _DB_NODE_TYPE = os.environ.get("VIGNEMALE_SCW_DB_NODE", "DB-DEV-S")       # VERIFY
 _DB_VOLUME_GB = int(os.environ.get("VIGNEMALE_SCW_DB_VOLUME_GB", "10"))
@@ -31,10 +33,20 @@ _DB_USER = "vignemale"
 _STATE_DIR = Path(os.environ.get(
     "VIGNEMALE_STATE_DIR", str(Path.home() / ".vignemale" / "deploy-state")
 ))
+# --- Serverless SQL Database (défaut) ---
+_SDB_CPU_MAX = int(os.environ.get("VIGNEMALE_SCW_SDB_CPU_MAX", "4"))
 
 
 def _tags(target: Target) -> list:
     return [f"vignemale-app={target.app}", f"vignemale-env={target.env}"]
+
+
+def _sanitize(name: str) -> str:
+    return "".join(c if c.isalnum() or c == "-" else "-" for c in name.lower())
+
+
+def _sdb_name(target: Target, db: str) -> str:
+    return _sanitize(f"vignemale-{target.app}-{target.env}-{db}")
 
 
 def _gen_password(n: int = 24) -> str:
@@ -52,7 +64,6 @@ class ScalewayProvider:
         self.target = target
         try:
             from scaleway import Client
-            from scaleway.rdb.v1 import RdbV1API
             from scaleway.container.v1beta1 import ContainerV1Beta1API
         except ImportError as e:  # pragma: no cover
             raise SystemExit(
@@ -66,10 +77,96 @@ class ScalewayProvider:
             default_project_id=target.scw_project_id,
             default_region=target.region,
         )
-        self._rdb = RdbV1API(self._client)
         self._container = ContainerV1Beta1API(self._client)
+        self._principal = None  # résolu paresseusement (serverless)
 
-    # ---- état local (mot de passe DB + IDs) ----
+    # ---- bases de données (dispatch backend) ----
+
+    def ensure_databases(self, target: Target, names: list) -> Dict[str, str]:
+        if target.db_backend == "managed":
+            return self._ensure_managed(target, names)
+        return self._ensure_serverless(target, names)
+
+    # ---- Serverless SQL Database (défaut) ----
+
+    def _principal_id(self) -> str:
+        """ID du user/application IAM porteur de la clé API (= user du DSN)."""
+        if self._principal is None:
+            from scaleway.iam.v1alpha1 import IamV1Alpha1API
+            key = IamV1Alpha1API(self._client).get_api_key(
+                access_key=self.target.scw_access_key
+            )
+            self._principal = key.user_id or key.application_id
+        return self._principal
+
+    def _ensure_serverless(self, target: Target, names: list) -> Dict[str, str]:
+        from scaleway.serverless_sqldb.v1alpha1 import ServerlessSqldbV1Alpha1API
+        api = ServerlessSqldbV1Alpha1API(self._client)
+        principal = self._principal_id()
+        secret = target.scw_secret_key
+        existing = {d.name: d for d in api.list_databases_all()}
+
+        dsns: Dict[str, str] = {}
+        for declared in names:
+            full = _sdb_name(target, declared)
+            db = existing.get(full)
+            if db is None:
+                db = api.create_database(
+                    name=full, cpu_min=0, cpu_max=_SDB_CPU_MAX,  # cpu_min=0 → scale-to-zero
+                    project_id=target.scw_project_id,
+                )
+                db = api.wait_for_database(database_id=db.id)
+            host = db.endpoint
+            hostport = host if ":" in host else f"{host}:5432"
+            dsns[declared] = (
+                f"postgresql://{principal}:{secret}@{hostport}/{full}?sslmode=require"
+            )
+        return dsns
+
+    # ---- Managed Database (option --db managed) ----
+
+    def _ensure_managed(self, target: Target, names: list) -> Dict[str, str]:
+        from scaleway.rdb.v1 import RdbV1API
+        rdb = RdbV1API(self._client)
+        inst_name = f"vignemale-{target.app}-{target.env}"
+        endpoint = self._ensure_rdb_instance(rdb, target, inst_name)
+        dsns: Dict[str, str] = {}
+        for declared in names:
+            dbname = declared.lower().replace("-", "_")
+            if not any(d.name == dbname for d in rdb.list_databases_all(instance_id=endpoint.instance_id)):
+                rdb.create_database(instance_id=endpoint.instance_id, name=dbname)
+            dsns[declared] = endpoint.dsn(dbname)
+        return dsns
+
+    def _ensure_rdb_instance(self, rdb, target: Target, name: str) -> DbEndpoint:
+        state = self._load_state()
+        if state.get("db", {}).get("name") == name and state["db"].get("password"):
+            d = state["db"]
+            return DbEndpoint(d["instance_id"], d["host"], d["port"], d["user"], d["password"])
+        if any(i.name == name for i in rdb.list_instances_all()):
+            raise SystemExit(
+                f"vignemale deploy: instance « {name} » existe côté Scaleway mais son "
+                "mot de passe n'est pas dans l'état local (~/.vignemale/deploy-state). "
+                "Le control plane stockera cet état dans sa base."
+            )
+        password = _gen_password()
+        inst = rdb.create_instance(
+            engine=_DB_ENGINE, user_name=_DB_USER, password=password,
+            node_type=_DB_NODE_TYPE, is_ha_cluster=False, disable_backup=False,
+            volume_size=_DB_VOLUME_GB * 1000 * 1000 * 1000, backup_same_region=True,
+            name=name, project_id=target.scw_project_id, tags=_tags(target),
+        )
+        inst = rdb.wait_for_instance(instance_id=inst.id)
+        ep = (inst.endpoints or [None])[0]
+        if ep is None:
+            raise SystemExit(f"vignemale deploy: instance « {name} » sans endpoint.")
+        host = getattr(ep, "ip", None) or getattr(getattr(ep, "load_balancer", None), "name", "")
+        port = getattr(ep, "port", 5432)
+        self._save_state({"db": {
+            "name": name, "instance_id": inst.id, "host": str(host),
+            "port": int(port), "user": _DB_USER, "password": password,
+        }})
+        return DbEndpoint(inst.id, str(host), int(port), _DB_USER, password)
 
     def _state_path(self) -> Path:
         return _STATE_DIR / f"{self.target.app}-{self.target.env}.json"
@@ -82,19 +179,26 @@ class ScalewayProvider:
         _STATE_DIR.mkdir(parents=True, exist_ok=True)
         self._state_path().write_text(json.dumps(state, indent=2))
 
-    # ---- lookup (lecture seule, sûr à lancer) ----
+    # ---- lookup (lecture seule) ----
 
     def existing(self, target: Target) -> Set[Tuple[str, str]]:
         found: Set[Tuple[str, str]] = set()
         wanted = set(_tags(target))
-        for inst in self._rdb.list_instances_all():
-            if wanted.issubset(set(inst.tags or [])):
-                found.add(("db_instance", inst.name))
+        prefix = _sanitize(f"vignemale-{target.app}-{target.env}-")
+        # serverless databases (par préfixe de nom — pas de tags sur ce produit)
+        try:
+            from scaleway.serverless_sqldb.v1alpha1 import ServerlessSqldbV1Alpha1API
+            for d in ServerlessSqldbV1Alpha1API(self._client).list_databases_all():
+                if d.name.startswith(prefix):
+                    found.add(("database", d.name[len(prefix):]))
+        except Exception:
+            pass
+        # containers (par tags)
         for ns in self._container.list_namespaces_all():
             for c in self._container.list_containers_all(namespace_id=ns.id):
                 if wanted.issubset(set(c.tags or [])):
                     found.add(("container", c.name))
-        # buckets : via boto3 (lecture)
+        # buckets
         try:
             for name in self._s3_buckets():
                 found.add(("bucket", name))
@@ -102,73 +206,10 @@ class ScalewayProvider:
             pass
         return found
 
-    # ---- Managed Database ----
-
-    def ensure_db_instance(self, target: Target, name: str) -> DbEndpoint:
-        state = self._load_state()
-        # 1) déjà connu localement → on réutilise (mot de passe en état).
-        if state.get("db", {}).get("name") == name and state["db"].get("password"):
-            db = state["db"]
-            return DbEndpoint(db["instance_id"], db["host"], db["port"], db["user"], db["password"])
-
-        # 2) chercher une instance existante par nom.
-        existing = next(
-            (i for i in self._rdb.list_instances_all() if i.name == name), None
-        )
-        if existing is not None:
-            raise SystemExit(
-                f"vignemale deploy: l'instance « {name} » existe déjà côté Scaleway "
-                "mais son mot de passe n'est pas dans l'état local. Restaure l'état "
-                "(~/.vignemale/deploy-state) ou supprime l'instance pour repartir net. "
-                "(Le control plane stocke cet état dans sa base.)"
-            )
-
-        # 3) créer.
-        password = _gen_password()
-        inst = self._rdb.create_instance(
-            engine=_DB_ENGINE,
-            user_name=_DB_USER,
-            password=password,
-            node_type=_DB_NODE_TYPE,
-            is_ha_cluster=False,
-            disable_backup=False,
-            volume_size=_DB_VOLUME_GB * 1000 * 1000 * 1000,  # VERIFY: octets
-            backup_same_region=True,
-            name=name,
-            project_id=target.scw_project_id,
-            tags=_tags(target),
-        )
-        inst = self._rdb.wait_for_instance(instance_id=inst.id)
-        ep = (inst.endpoints or [None])[0]
-        if ep is None:
-            raise SystemExit(
-                f"vignemale deploy: instance « {name} » créée mais sans endpoint "
-                "— créer un endpoint puis relancer."
-            )
-        host = getattr(ep, "ip", None) or getattr(getattr(ep, "load_balancer", None), "name", "")
-        port = getattr(ep, "port", 5432)
-        self._save_state({
-            "db": {
-                "name": name, "instance_id": inst.id, "host": str(host),
-                "port": int(port), "user": _DB_USER, "password": password,
-            }
-        })
-        return DbEndpoint(inst.id, str(host), int(port), _DB_USER, password)
-
-    def ensure_database(self, target: Target, instance_id: str, name: str) -> None:
-        exists = any(
-            d.name == name
-            for d in self._rdb.list_databases_all(instance_id=instance_id)
-        )
-        if not exists:
-            self._rdb.create_database(instance_id=instance_id, name=name)
-        # pgvector : à activer par `CREATE EXTENSION vector` (via les migrations
-        # de l'app, ou une étape dédiée — voir TODO migrations).
-
     # ---- Object Storage (S3) ----
 
     def _s3(self):
-        import boto3  # lazy
+        import boto3
         return boto3.client(
             "s3",
             endpoint_url=f"https://s3.{self.target.region}.scw.cloud",
@@ -189,9 +230,7 @@ class ScalewayProvider:
 
     def _ensure_namespace(self, target: Target) -> str:
         ns_name = f"vignemale-{target.app}-{target.env}"
-        ns = next(
-            (n for n in self._container.list_namespaces_all() if n.name == ns_name), None
-        )
+        ns = next((n for n in self._container.list_namespaces_all() if n.name == ns_name), None)
         if ns is None:
             ns = self._container.create_namespace(
                 name=ns_name, project_id=target.scw_project_id, tags=_tags(target)
@@ -200,48 +239,30 @@ class ScalewayProvider:
         return ns.id
 
     def deploy_container(
-        self,
-        target: Target,
-        name: str,
-        image: str,
-        env: Dict[str, str],
-        secret_env: Dict[str, str],
+        self, target: Target, name: str, image: str,
+        env: Dict[str, str], secret_env: Dict[str, str],
     ) -> str:
         from scaleway.container.v1beta1 import (
-            Secret as ContainerSecret,
-            ContainerPrivacy,
-            ContainerProtocol,
+            Secret as ContainerSecret, ContainerPrivacy, ContainerProtocol,
         )
-
         ns_id = self._ensure_namespace(target)
         secrets_list = [ContainerSecret(key=k, value=v) for k, v in secret_env.items()]
-
         existing = next(
-            (c for c in self._container.list_containers_all(namespace_id=ns_id)
-             if c.name == name), None
+            (c for c in self._container.list_containers_all(namespace_id=ns_id) if c.name == name),
+            None,
         )
         if existing is None:
             container = self._container.create_container(
-                namespace_id=ns_id,
-                name=name,
-                registry_image=image,
-                port=8080,
-                environment_variables=env,
-                secret_environment_variables=secrets_list,
-                min_scale=0,
-                max_scale=5,
-                privacy=ContainerPrivacy.PUBLIC,
-                protocol=ContainerProtocol.HTTP1,
-                tags=_tags(target),
+                namespace_id=ns_id, name=name, registry_image=image, port=8080,
+                environment_variables=env, secret_environment_variables=secrets_list,
+                min_scale=0, max_scale=5, privacy=ContainerPrivacy.PUBLIC,
+                protocol=ContainerProtocol.HTTP1, tags=_tags(target),
             )
         else:
             container = self._container.update_container(
-                container_id=existing.id,
-                registry_image=image,
-                environment_variables=env,
-                secret_environment_variables=secrets_list,
+                container_id=existing.id, registry_image=image,
+                environment_variables=env, secret_environment_variables=secrets_list,
             )
-
         self._container.deploy_container(container_id=container.id)
         container = self._container.wait_for_container(container_id=container.id)
         domain = getattr(container, "domain_name", "") or ""

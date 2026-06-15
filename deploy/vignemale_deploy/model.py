@@ -20,6 +20,9 @@ class Target:
     env: str = "prod"
     region: str = "fr-par"                  # fr-par · nl-ams · pl-waw
     image: Optional[str] = None             # ref/digest de l'image d'app (vignemale build)
+    # backend base de données : "serverless" (Serverless SQL, scale-to-zero — défaut)
+    # ou "managed" (Managed Database / instance always-on).
+    db_backend: str = "serverless"
     scw_access_key: Optional[str] = None
     scw_secret_key: Optional[str] = None
     scw_project_id: Optional[str] = None

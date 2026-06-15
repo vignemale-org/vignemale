@@ -3,11 +3,10 @@
 import pytest
 
 from vignemale_deploy import Target, apply_plan, build_runtime_env
-from vignemale_deploy.model import DbEndpoint
 
 
 class FakeProvider:
-    """Provider en mémoire : enregistre les appels, renvoie un endpoint factice."""
+    """Provider en mémoire : enregistre les appels, renvoie des DSN factices."""
 
     def __init__(self):
         self.calls = []
@@ -15,12 +14,12 @@ class FakeProvider:
     def existing(self, target):
         return set()
 
-    def ensure_db_instance(self, target, name):
-        self.calls.append(("instance", name))
-        return DbEndpoint("inst-1", "10.0.0.1", 5432, "vignemale", "pw")
-
-    def ensure_database(self, target, instance_id, name):
-        self.calls.append(("database", name))
+    def ensure_databases(self, target, names):
+        self.calls.append(("databases", tuple(names)))
+        return {
+            n: f"postgresql://principal:secret@host:5432/{n}?sslmode=require"
+            for n in names
+        }
 
     def ensure_bucket(self, target, name):
         self.calls.append(("bucket", name))
@@ -51,9 +50,9 @@ def test_apply_ordonne_et_complet():
     p = FakeProvider()
     dep = apply_plan(META, _target(), p, secret_values={"OPENAI_API_KEY": "sk-1"})
     kinds = [c[0] for c in p.calls]
-    # instance d'abord, puis bases, puis bucket, puis container en dernier
-    assert kinds[0] == "instance"
-    assert kinds.count("database") == 2
+    # bases (en un appel), puis bucket, puis container en dernier
+    assert kinds[0] == "databases"
+    assert ("databases", ("corpus_kb", "corpus_rag")) in p.calls
     assert "bucket" in kinds
     assert kinds[-1] == "container"
     assert dep.url.startswith("https://corpus-prod")

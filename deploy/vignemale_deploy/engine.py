@@ -25,7 +25,7 @@ def desired_resources(meta: dict, target: Target) -> List[Resource]:
     res: List[Resource] = []
 
     databases = meta.get("databases") or []
-    if databases:
+    if databases and target.db_backend == "managed":
         instance = f"vignemale-{target.app}-{target.env}"
         res.append(Resource(
             "db_instance", instance,
@@ -34,6 +34,12 @@ def desired_resources(meta: dict, target: Target) -> List[Resource]:
         ))
         for db in databases:
             res.append(Resource("database", db, "base logique PostgreSQL", f"dans {instance}"))
+    else:
+        for db in databases:
+            res.append(Resource(
+                "database", db, "Serverless SQL Database (pgvector)",
+                "scale-to-zero (cpu_min=0)",
+            ))
 
     for bucket in meta.get("buckets") or []:
         res.append(Resource("bucket", bucket, "Object Storage (bucket S3)"))

@@ -16,20 +16,28 @@ def _kinds(plan):
 
 
 def test_plan_mappe_chaque_primitive():
+    # défaut = serverless : pas d'instance, 1 Serverless SQL DB par base déclarée
     plan = build_plan(META_RICHE, Target(app="corpus", image="img@sha256:x"))
     kinds = _kinds(plan)
-    # une instance + 2 bases logiques + 1 bucket + 1 secret + 1 container
-    assert kinds.count("db_instance") == 1
+    assert kinds.count("db_instance") == 0
     assert kinds.count("database") == 2
     assert kinds.count("bucket") == 1
     assert kinds.count("secret") == 1
     assert kinds.count("container") == 1
 
 
+def test_managed_ajoute_une_instance():
+    plan = build_plan(META_RICHE, Target(app="corpus", image="i", db_backend="managed"))
+    kinds = _kinds(plan)
+    assert kinds.count("db_instance") == 1  # instance partagée
+    assert kinds.count("database") == 2     # bases logiques
+
+
 def test_tout_a_creer_hors_ligne():
+    # serverless : 2 bases + 1 bucket + 1 secret + 1 container = 5
     plan = build_plan(META_RICHE, Target(app="corpus", image="img@sha256:x"))
     assert all(a.op == "create" for a in plan.actions)
-    assert plan.counts()["create"] == 6
+    assert plan.counts()["create"] == 5
 
 
 def test_env_vars_provider_switch():

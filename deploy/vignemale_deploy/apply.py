@@ -7,22 +7,17 @@ prod, un faux provider en test. C'est ce qui rend l'apply testable sans compte e
 réutilisable par le control plane.
 """
 
-from typing import Callable, Dict, List, Protocol, Set, Tuple
+from typing import Callable, Dict, Protocol, Set, Tuple
 
-from .model import Target, DbEndpoint, Deployment
+from .model import Target, Deployment
 from .engine import _env_suffix
-
-
-def _sanitize_db(name: str) -> str:
-    return "".join(c if c.isalnum() or c == "_" else "_" for c in name.lower())
 
 
 class Provider(Protocol):
     """Ce que l'orchestrateur attend d'un backend cloud (impl. : ScalewayProvider)."""
 
     def existing(self, target: Target) -> Set[Tuple[str, str]]: ...
-    def ensure_db_instance(self, target: Target, name: str) -> DbEndpoint: ...
-    def ensure_database(self, target: Target, instance_id: str, name: str) -> None: ...
+    def ensure_databases(self, target: Target, names: list) -> Dict[str, str]: ...  # nom → DSN
     def ensure_bucket(self, target: Target, name: str) -> None: ...
     def deploy_container(
         self,
@@ -80,20 +75,14 @@ def apply_plan(
             "apply: --image requis (ref poussée au Container Registry du client)"
         )
 
-    # 1) Managed Database : une instance partagée + N bases logiques.
+    # 1) Bases de données : le provider gère le backend (serverless ou managed)
+    #    et renvoie un DSN par base déclarée.
     dsns: Dict[str, str] = {}
     databases = meta.get("databases") or []
     if databases:
-        inst_name = f"vignemale-{target.app}-{target.env}"
-        log(f"Managed Database : instance « {inst_name} »…")
-        endpoint = provider.ensure_db_instance(target, inst_name)
-        dep.steps.append(f"instance Managed Database {inst_name}")
-        for db in databases:
-            dbname = _sanitize_db(db)
-            log(f"  base logique « {dbname} »…")
-            provider.ensure_database(target, endpoint.instance_id, dbname)
-            dsns[db] = endpoint.dsn(dbname)
-            dep.steps.append(f"base {dbname}")
+        log(f"Bases ({target.db_backend}) : {', '.join(databases)}…")
+        dsns = provider.ensure_databases(target, databases)
+        dep.steps.extend(f"base {d}" for d in databases)
 
     # 2) Object Storage (S3).
     for bucket in meta.get("buckets") or []:

@@ -200,6 +200,7 @@ def cmd_deploy(args):
         env=args.env,
         region=args.region,
         image=args.image,
+        db_backend=args.db,
         scw_access_key=os.environ.get("SCW_ACCESS_KEY"),
         scw_secret_key=os.environ.get("SCW_SECRET_KEY"),
         scw_project_id=os.environ.get("SCW_DEFAULT_PROJECT_ID")
@@ -400,6 +401,10 @@ def main(argv=None):
     p_deploy.add_argument("--env", default="prod", help="environnement (défaut: prod)")
     p_deploy.add_argument("--region", default="fr-par", help="région Scaleway (défaut: fr-par)")
     p_deploy.add_argument("--image", help="ref/digest de l'image d'app (vignemale build)")
+    p_deploy.add_argument(
+        "--db", choices=["serverless", "managed"], default="serverless",
+        help="backend base de données : serverless (scale-to-zero, défaut) ou managed",
+    )
     p_deploy.add_argument(
         "--dry-run", action="store_true", help="montre le plan de déploiement sans rien créer"
     )
