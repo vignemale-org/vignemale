@@ -53,3 +53,29 @@ class Plan:
         for a in self.actions:
             c[a.op] = c.get(a.op, 0) + 1
         return c
+
+
+@dataclass(frozen=True)
+class DbEndpoint:
+    """Résultat de la création/réutilisation d'une instance Managed Database."""
+    instance_id: str
+    host: str
+    port: int
+    user: str
+    password: str
+
+    def dsn(self, dbname: str) -> str:
+        # Scaleway Managed Database impose TLS → sslmode=require.
+        return (
+            f"postgresql://{self.user}:{self.password}@{self.host}:{self.port}/"
+            f"{dbname}?sslmode=require"
+        )
+
+
+@dataclass
+class Deployment:
+    """Résultat d'un apply : où est l'app, et ce qui a été fait."""
+    app: str
+    env: str
+    url: Optional[str] = None
+    steps: List[str] = field(default_factory=list)

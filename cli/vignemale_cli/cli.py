@@ -189,19 +189,63 @@ def cmd_gen(args):
 
 
 def cmd_deploy(args):
-    from .collect import extract_path
+    import os
 
-    extracted, app_name = extract_path(args.path)
+    from .collect import extract_path
     from vignemale_deploy import Target, build_plan, render
 
-    target = Target(app=app_name, env=args.env, region=args.region, image=args.image)
-    if not args.dry_run:
+    extracted, app_name = extract_path(args.path)
+    target = Target(
+        app=app_name,
+        env=args.env,
+        region=args.region,
+        image=args.image,
+        scw_access_key=os.environ.get("SCW_ACCESS_KEY"),
+        scw_secret_key=os.environ.get("SCW_SECRET_KEY"),
+        scw_project_id=os.environ.get("SCW_DEFAULT_PROJECT_ID")
+        or os.environ.get("SCW_PROJECT_ID"),
+    )
+
+    if args.dry_run:
+        # hors-ligne : provider=None → le plan suppose un compte vierge.
+        print(render(build_plan(extracted, target)))
+        return
+
+    # apply réel : credentials Scaleway requis (compte DU CLIENT).
+    creds = target.scw_access_key and target.scw_secret_key and target.scw_project_id
+    if not creds:
         raise SystemExit(
-            "vignemale deploy: l'apply réel (control plane / Scaleway) arrive à la "
-            "tranche suivante. Pour l'instant : `--dry-run` montre le plan."
+            "vignemale deploy: pose SCW_ACCESS_KEY / SCW_SECRET_KEY / "
+            "SCW_DEFAULT_PROJECT_ID (compte Scaleway cible), ou utilise --dry-run."
         )
-    # dry-run hors-ligne : provider=None → le plan suppose un compte vierge.
-    print(render(build_plan(extracted, target)))
+    if not args.image:
+        raise SystemExit(
+            "vignemale deploy: --image requis (ref poussée au Container Registry). "
+            "`vignemale build` puis pousse l'image, ou --dry-run pour voir le plan."
+        )
+
+    from vignemale_deploy import ScalewayProvider, apply_plan
+
+    provider = ScalewayProvider(target)
+    # montre le plan réel (lookup) puis demande confirmation — ressources facturables.
+    plan = build_plan(extracted, target, provider)
+    print(render(plan))
+    if not args.yes:
+        ans = input("\nAppliquer ce plan dans le compte Scaleway ? [oui/N] ").strip().lower()
+        if ans not in ("oui", "o", "yes", "y"):
+            raise SystemExit("vignemale deploy: annulé.")
+
+    # valeurs de secrets : depuis l'env VIGNEMALE_SECRET_<NOM> au moment du deploy.
+    secret_values = {}
+    for name in extracted.get("secrets") or []:
+        env_name = f"VIGNEMALE_SECRET_{name.upper().replace('-', '_')}"
+        if env_name in os.environ:
+            secret_values[name] = os.environ[env_name]
+
+    dep = apply_plan(extracted, target, provider, secret_values, on_progress=lambda m: print("  " + m))
+    print(f"\nvignemale: « {dep.app} » déployé sur {dep.env}.")
+    if dep.url:
+        print(f"  URL : {dep.url}")
 
 
 def cmd_build(args):
@@ -349,6 +393,9 @@ def main(argv=None):
     p_deploy.add_argument("--image", help="ref/digest de l'image d'app (vignemale build)")
     p_deploy.add_argument(
         "--dry-run", action="store_true", help="montre le plan de déploiement sans rien créer"
+    )
+    p_deploy.add_argument(
+        "--yes", action="store_true", help="applique sans demander confirmation"
     )
     p_deploy.set_defaults(func=cmd_deploy)
 

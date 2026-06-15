@@ -12,7 +12,8 @@ requires-python = ">=3.9"
 dependencies = []
 
 [project.optional-dependencies]
-scaleway = ["scaleway>=2"]
+# apply réel : SDK Scaleway (rdb/container/secret/registry/iam) + boto3 (Object Storage S3)
+scaleway = ["scaleway>=2", "boto3>=1.28"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["vignemale_deploy"]
