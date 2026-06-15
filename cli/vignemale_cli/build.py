@@ -137,6 +137,8 @@ def build(
     print_only: bool = False,
     from_source: bool = False,
     base: str = None,
+    platform: str = None,
+    push: bool = False,
 ) -> str:
     base = base or DEFAULT_BASE_IMAGE
     if tag is None:
@@ -165,28 +167,40 @@ def build(
 
         if not shutil.which("docker"):
             raise SystemExit("vignemale build: Docker requis (https://docker.com)")
-        if from_source:
-            msg = "compilation Rust release dans l'étage builder, patiente"
+
+        # buildx dès qu'on cible une plateforme (ex. linux/amd64 pour Scaleway
+        # depuis un Mac arm64) ou qu'on pousse au registry.
+        if platform or push:
+            cmd = ["docker", "buildx", "build"]
+            if platform:
+                cmd += ["--platform", platform]
+            cmd += ["-t", tag, "--push" if push else "--load", ctx]
         else:
-            msg = f"au-dessus de {base}"
-        print(f"vignemale: build de l'image « {tag} » ({msg})…", flush=True)
-        r = subprocess.run(["docker", "build", "-t", tag, ctx])
+            cmd = ["docker", "build", "-t", tag, ctx]
+
+        target = "pousse" if push else "build"
+        where = f" ({platform})" if platform else ""
+        src = "compilation Rust release, patiente" if from_source else f"au-dessus de {base}"
+        print(f"vignemale: {target} de l'image « {tag} »{where} ({src})…", flush=True)
+        r = subprocess.run(cmd)
         if r.returncode != 0:
             hint = ""
             if not from_source:
                 hint = (
                     f"\n  (l'image de base {base} est-elle accessible ? "
-                    "`docker login ghcr.io`, ou builde-la — "
-                    "`docker build -f docker/runtime.Dockerfile -t vignemale-python:latest .` — "
-                    "ou utilise `--from-source`)"
+                    "`docker login ghcr.io`, ou `--from-source`)"
                 )
-            raise SystemExit(f"vignemale build: échec du docker build{hint}")
-        print(
-            f"vignemale: image « {tag} » prête.\n"
-            f"  lancer :   docker run --rm -p 8080:8080 {tag}\n"
-            f"  healthz :  curl localhost:8080/__vignemale/healthz",
-            flush=True,
-        )
+            raise SystemExit(f"vignemale build: échec du build{hint}")
+        if push:
+            print(f"vignemale: image « {tag} » poussée. Déploie :\n"
+                  f"  vignemale deploy <app> --image {tag}", flush=True)
+        else:
+            print(
+                f"vignemale: image « {tag} » prête.\n"
+                f"  lancer :   docker run --rm -p 8080:8080 {tag}\n"
+                f"  healthz :  curl localhost:8080/__vignemale/healthz",
+                flush=True,
+            )
         return tag
     finally:
         if not keep:

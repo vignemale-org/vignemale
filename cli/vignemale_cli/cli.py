@@ -257,6 +257,8 @@ def cmd_build(args):
         print_only=args.print,
         from_source=args.from_source,
         base=args.base,
+        platform=args.platform,
+        push=args.push,
     )
 
 
@@ -378,6 +380,13 @@ def main(argv=None):
         dest="from_source",
         action="store_true",
         help="compile le runtime Rust dans l'image au lieu de partir de l'image de base",
+    )
+    p_build.add_argument(
+        "--platform",
+        help="plateforme cible (ex. linux/amd64 pour Scaleway depuis un Mac arm64)",
+    )
+    p_build.add_argument(
+        "--push", action="store_true", help="pousse l'image au registry (buildx) après build"
     )
     p_build.add_argument(
         "--print", action="store_true", help="affiche le Dockerfile sans builder"
