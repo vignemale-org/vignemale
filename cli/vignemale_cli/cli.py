@@ -188,6 +188,22 @@ def cmd_gen(args):
         print(f"vignemale: écrit {f}")
 
 
+def cmd_deploy(args):
+    from .collect import extract_path
+
+    extracted, app_name = extract_path(args.path)
+    from vignemale_deploy import Target, build_plan, render
+
+    target = Target(app=app_name, env=args.env, region=args.region, image=args.image)
+    if not args.dry_run:
+        raise SystemExit(
+            "vignemale deploy: l'apply réel (control plane / Scaleway) arrive à la "
+            "tranche suivante. Pour l'instant : `--dry-run` montre le plan."
+        )
+    # dry-run hors-ligne : provider=None → le plan suppose un compte vierge.
+    print(render(build_plan(extracted, target)))
+
+
 def cmd_build(args):
     from .build import build
 
@@ -323,6 +339,18 @@ def main(argv=None):
         "--print", action="store_true", help="affiche le Dockerfile sans builder"
     )
     p_build.set_defaults(func=cmd_build)
+
+    p_deploy = sub.add_parser(
+        "deploy", help="déploie l'app sur Scaleway (control plane) — pour l'instant --dry-run"
+    )
+    p_deploy.add_argument("path", help="fichier ou dossier de l'app")
+    p_deploy.add_argument("--env", default="prod", help="environnement (défaut: prod)")
+    p_deploy.add_argument("--region", default="fr-par", help="région Scaleway (défaut: fr-par)")
+    p_deploy.add_argument("--image", help="ref/digest de l'image d'app (vignemale build)")
+    p_deploy.add_argument(
+        "--dry-run", action="store_true", help="montre le plan de déploiement sans rien créer"
+    )
+    p_deploy.set_defaults(func=cmd_deploy)
 
     p_rgpd = sub.add_parser(
         "rgpd", help="données personnelles : map (carte) · export · forget"

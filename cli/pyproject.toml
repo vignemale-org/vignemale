@@ -5,10 +5,11 @@ build-backend = "hatchling.build"
 [project]
 name = "vignemale-cli"
 version = "0.1.0"
-description = "CLI Vignemale — run, check, gen, rgpd (outillage développeur)."
+description = "CLI Vignemale — run, check, gen, build, deploy, rgpd (outillage développeur)."
 requires-python = ">=3.9"
 dependencies = [
     "vignemale",        # le runtime (binding core + SDK)
+    "vignemale-deploy", # moteur d'orchestration (plan/deploy Scaleway)
     "griffe>=1.0",      # extraction statique (collect)
     "protobuf>=5",      # émission du meta.proto (protojson)
 ]

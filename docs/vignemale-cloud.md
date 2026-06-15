@@ -45,14 +45,19 @@ en `--local`.
      reproductible). Plus "vraie plateforme" mais nécessite une **build farm**.
    → Démarrer en (a), garder (b) comme évolution.
 
-2. **Où vont les déploiements ?**
-   - **BYOC** : dans le compte Scaleway du client (creds délégués / IAM
-     restreint qu'il connecte). Léger, pas de statut de revendeur cloud, pas de
-     sécurité multi-tenant lourde. **Reco pour démarrer.**
-   - **Managed** : Vignemale possède le compte cloud, multi-tenant, facture le
-     client (la vraie "Vignemale Cloud"). Gros : sécurité multi-tenant, billing,
-     conformité. → évolution.
-   → BYOC d'abord (UX équipe immédiate), managed ensuite.
+2. **Où vont les déploiements ? — DÉCIDÉ : BYOC + control plane managé qui facture.**
+   On déploie **toujours dans le compte Scaleway du CLIENT** (il connecte une clé
+   IAM restreinte), mais l'orchestration passe par le **serveur distant** qui
+   garde le contrôle (RBAC, état, secrets, audit, historique). Vignemale **facture
+   le service de plateforme** (orchestration + management + observabilité), pas la
+   compute (que le client paie directement à Scaleway).
+   - Avantage : pas de statut de revendeur cloud, pas d'infra compute partagée à
+     isoler, mais on garde un produit facturable et le contrôle.
+   - Sécurité : le control plane détient les **creds Scaleway de N clients** → le
+     chiffrement au repos + l'isolation des secrets par tenant restent critiques
+     (mais pas d'isolation de compute multi-tenant à gérer).
+   - `--local` : le même moteur tourne sur le laptop sans serveur (open-source /
+     self-hosted), déployant dans le même compte client.
 
 3. **Login** : OAuth **device-flow** (`vignemale login` ouvre le navigateur,
    confirme un code) → token dans `~/.vignemale/auth.json`. Le CLI joint le token
