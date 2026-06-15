@@ -198,6 +198,90 @@ fn s3_roundtrip(
     Ok(PyBytes::new_bound(py, &result).unbind())
 }
 
+// --- objects (Bucket) : opérations S3 via le core, config résolue par le SDK ---
+
+#[allow(clippy::too_many_arguments)]
+fn bucket_handle(
+    endpoint: String,
+    region: String,
+    access_key: String,
+    secret_key: String,
+    cloud_name: String,
+) -> anyhow::Result<objects::Bucket> {
+    let cluster = rt::BucketCluster {
+        rid: "vignemale".to_string(),
+        buckets: vec![],
+        provider: Some(rt::bucket_cluster::Provider::S3(rt::bucket_cluster::S3 {
+            region,
+            endpoint: Some(endpoint),
+            access_key_id: Some(access_key),
+            secret_access_key: Some(rt::SecretData {
+                source: Some(rt::secret_data::Source::Embedded(secret_key.into_bytes())),
+                sub_path: None,
+                encoding: rt::secret_data::Encoding::None as i32,
+            }),
+        })),
+    };
+    let b = rt::Bucket {
+        rid: "vignemale".to_string(),
+        vignemale_name: cloud_name.clone(),
+        cloud_name,
+        key_prefix: None,
+        public_base_url: None,
+    };
+    objects::bucket_from_cluster(&cluster, &b)
+}
+
+/// Une opération bucket : `op` ∈ {create, put, get, exists, list, delete}.
+/// `cfg` = (endpoint, region, access_key, secret_key, cloud_name).
+#[pyfunction]
+#[pyo3(signature = (cfg, op, key=String::new(), value=None))]
+fn bucket_op(
+    py: Python<'_>,
+    cfg: (String, String, String, String, String),
+    op: String,
+    key: String,
+    value: Option<Vec<u8>>,
+) -> PyResult<PyObject> {
+    enum R {
+        None,
+        Bytes(Vec<u8>),
+        Bool(bool),
+        Keys(Vec<String>),
+    }
+    let (endpoint, region, access_key, secret_key, cloud_name) = cfg;
+    // tout l'async dans UN block_on (GIL relâché) ; conversion PyObject après.
+    let result: anyhow::Result<R> = py.allow_threads(|| {
+        shared_runtime().block_on(async move {
+            let bucket = bucket_handle(endpoint, region, access_key, secret_key, cloud_name)?;
+            Ok(match op.as_str() {
+                "create" => {
+                    bucket.create_if_not_exists().await?;
+                    R::None
+                }
+                "put" => {
+                    bucket.put(&key, value.unwrap_or_default()).await?;
+                    R::None
+                }
+                "get" => R::Bytes(bucket.get(&key).await?),
+                "exists" => R::Bool(bucket.exists(&key).await?),
+                "list" => R::Keys(bucket.list(&key).await?),
+                "delete" => {
+                    bucket.delete(&key).await?;
+                    R::None
+                }
+                other => anyhow::bail!("opération bucket inconnue: {other}"),
+            })
+        })
+    });
+    match result.map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:#}")))? {
+        R::None => Ok(py.None()),
+        R::Bytes(b) => Ok(PyBytes::new_bound(py, &b).into()),
+        R::Bool(b) => Ok(b.into_py(py)),
+        R::Keys(k) => Ok(k.into_py(py)),
+    }
+}
+
 // --- sqldb (Postgres) : requêtes via le pool du core, params/lignes en JSON ---
 
 fn parse_sql_params(params_json: &str) -> PyResult<Vec<sqldb::SqlParam>> {
@@ -808,6 +892,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(resolve_b64_secret, m)?)?;
     m.add_function(wrap_pyfunction!(resolve_json_key_secret, m)?)?;
     m.add_function(wrap_pyfunction!(s3_roundtrip, m)?)?;
+    m.add_function(wrap_pyfunction!(bucket_op, m)?)?;
     m.add_function(wrap_pyfunction!(sqldb_query, m)?)?;
     m.add_function(wrap_pyfunction!(sqldb_execute, m)?)?;
     m.add_function(wrap_pyfunction!(sqldb_prepare, m)?)?;

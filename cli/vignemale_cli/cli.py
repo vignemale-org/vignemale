@@ -61,10 +61,14 @@ def _provision(path: str) -> None:
 
     extracted, _ = extract_path(path)
     databases = extracted.get("databases") or []
-    if databases:
+    buckets = extracted.get("buckets") or []
+    if databases or buckets:
         from . import devinfra
 
-        devinfra.provision_local(databases)
+        if databases:
+            devinfra.provision_local(databases)
+        if buckets:
+            devinfra.provision_buckets(buckets)
 
 
 def _migrate(path: str) -> None:

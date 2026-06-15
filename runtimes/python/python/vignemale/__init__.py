@@ -18,8 +18,10 @@ from vignemale import log
 from vignemale.api import (
     api, auth_handler, serve, serve_gateway, static_files, APIError, HTTPError,
 )
+from vignemale.bucket import Bucket, BucketError
 from vignemale.call import call
 from vignemale.service import Service
+from vignemale.secret import Secret
 from vignemale.sqldb import SQLDatabase, SQLError
 
 __all__ = [
@@ -42,5 +44,8 @@ __all__ = [
     "Service",
     "SQLDatabase",
     "SQLError",
+    "Bucket",
+    "BucketError",
+    "Secret",
     "log",
 ]

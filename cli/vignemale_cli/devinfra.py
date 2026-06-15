@@ -123,3 +123,72 @@ def _ensure_database(dbname: str) -> None:
     )
     if not rows:
         _core.sqldb_execute(ADMIN_DSN, f'CREATE DATABASE "{dbname}"', "[]")
+
+
+# --- Object Storage local : MinIO (S3-compatible), façon Postgres ci-dessus ---
+
+MINIO_CONTAINER = "vignemale-minio"
+MINIO_VOLUME = "vignemale-minio-data"
+MINIO_PORT = 9100
+MINIO_KEY = "minioadmin"  # dev local uniquement
+MINIO_ENDPOINT = f"http://127.0.0.1:{MINIO_PORT}"
+
+
+def provision_buckets(bucket_names: list) -> None:
+    """Démarre MinIO en local (si besoin), crée les buckets, pose la config S3.
+
+    Sautée si `VIGNEMALE_S3_ENDPOINT` est déjà posé (prod / provider switch)."""
+    if not bucket_names or os.environ.get("VIGNEMALE_S3_ENDPOINT"):
+        return
+    _ensure_minio()
+    os.environ.setdefault("VIGNEMALE_S3_ENDPOINT", MINIO_ENDPOINT)
+    os.environ.setdefault("VIGNEMALE_S3_REGION", "us-east-1")
+    os.environ.setdefault("VIGNEMALE_S3_ACCESS_KEY", MINIO_KEY)
+    os.environ.setdefault("VIGNEMALE_S3_SECRET_KEY", MINIO_KEY)
+    for name in bucket_names:
+        cloud = _sanitize(name)
+        _core.bucket_op(
+            (MINIO_ENDPOINT, "us-east-1", MINIO_KEY, MINIO_KEY, cloud), "create"
+        )
+        print(f"vignemale: bucket S3 « {name} » prêt (minio local)", flush=True)
+
+
+def _ensure_minio() -> None:
+    if not shutil.which("docker"):
+        raise SystemExit(
+            "vignemale: l'app déclare un Bucket ; il faut Docker pour MinIO en "
+            "local — ou pose VIGNEMALE_S3_ENDPOINT toi-même"
+        )
+    if _docker("info").returncode != 0:
+        _start_docker_daemon()
+    state = _docker("inspect", "-f", "{{.State.Running}}", MINIO_CONTAINER)
+    if state.returncode != 0:
+        print("vignemale: démarrage de MinIO local (docker)…", flush=True)
+        r = _docker(
+            "run", "-d",
+            "--name", MINIO_CONTAINER,
+            "-p", f"{MINIO_PORT}:9000",
+            "-e", f"MINIO_ROOT_USER={MINIO_KEY}",
+            "-e", f"MINIO_ROOT_PASSWORD={MINIO_KEY}",
+            "-v", f"{MINIO_VOLUME}:/data",
+            "minio/minio", "server", "/data",
+        )
+        if r.returncode != 0:
+            raise SystemExit(f"vignemale: impossible de lancer MinIO: {r.stderr.strip()}")
+    elif state.stdout.strip() != "true":
+        _docker("start", MINIO_CONTAINER)
+    _wait_minio()
+
+
+def _wait_minio(timeout: float = 60) -> None:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            _core.bucket_op(
+                (MINIO_ENDPOINT, "us-east-1", MINIO_KEY, MINIO_KEY, "vignemale-probe"),
+                "create",
+            )
+            return
+        except RuntimeError:
+            time.sleep(0.4)
+    raise SystemExit("vignemale: MinIO n'a pas démarré à temps")

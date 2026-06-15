@@ -37,26 +37,30 @@ def _is_pydantic(cls) -> bool:
 
 
 def _extract_module(mod) -> tuple:
-    """Renvoie (service, endpoints, models, databases, auth_handler, model_modules)
-    pour un module griffe — récursif : un package (dossier-service) agrège ses
+    """Renvoie (service, endpoints, models, databases, auth_handler,
+    model_modules, buckets, secrets) — récursif : un package agrège ses
     sous-modules."""
     service = None
     models = {}
     model_modules = {}
     endpoints = []
     databases = []
+    buckets = []
+    secrets = []
     auth_fn = None
 
     for name, m in mod.members.items():
         kind = m.kind.value
 
         if kind == "module":  # sous-module d'un dossier-service
-            svc2, eps2, mods2, dbs2, auth2, modmods2 = _extract_module(m)
+            svc2, eps2, mods2, dbs2, auth2, modmods2, bk2, sec2 = _extract_module(m)
             service = service or svc2
             endpoints.extend(eps2)
             models.update(mods2)
             model_modules.update(modmods2)
             databases.extend(db for db in dbs2 if db not in databases)
+            buckets.extend(b for b in bk2 if b not in buckets)
+            secrets.extend(s for s in sec2 if s not in secrets)
             auth_fn = auth_fn or auth2
             continue
 
@@ -92,6 +96,12 @@ def _extract_module(mod) -> tuple:
             elif fn == "SQLDatabase" or fn.endswith(".SQLDatabase"):
                 if first_arg:
                     databases.append(first_arg)
+            elif fn == "Bucket" or fn.endswith(".Bucket"):
+                if first_arg:
+                    buckets.append(first_arg)
+            elif fn == "Secret" or fn.endswith(".Secret"):
+                if first_arg:
+                    secrets.append(first_arg)
 
         elif kind == "function":
             for deco in m.decorators:
@@ -131,7 +141,7 @@ def _extract_module(mod) -> tuple:
                     },
                 })
 
-    return service, endpoints, models, databases, auth_fn, model_modules
+    return service, endpoints, models, databases, auth_fn, model_modules, buckets, secrets
 
 
 def extract_path(path: str) -> tuple[dict, str]:
@@ -140,6 +150,8 @@ def extract_path(path: str) -> tuple[dict, str]:
     services = []
     models = {}
     databases = []
+    buckets = []
+    secrets = []
 
     if os.path.isdir(path):
         app_name = os.path.basename(path)
@@ -164,12 +176,14 @@ def extract_path(path: str) -> tuple[dict, str]:
     model_modules = {}
     for modname in modnames:
         mod = griffe.load(modname, search_paths=[path])
-        svc, eps, mods, dbs, auth_fn, modmods = _extract_module(mod)
+        svc, eps, mods, dbs, auth_fn, modmods, bks, secs = _extract_module(mod)
         if eps or svc:
             services.append({"name": svc or modname, "endpoints": eps, "databases": dbs})
         models.update(mods)
         model_modules.update(modmods)
         databases.extend(db for db in dbs if db not in databases)
+        buckets.extend(b for b in bks if b not in buckets)
+        secrets.extend(s for s in secs if s not in secrets)
         if auth_fn and auth_handler is None:
             auth_handler = {"name": auth_fn, "service": svc or modname}
 
@@ -178,6 +192,8 @@ def extract_path(path: str) -> tuple[dict, str]:
         "models": models,
         "model_modules": model_modules,
         "databases": databases,
+        "buckets": buckets,
+        "secrets": secrets,
         "auth_handler": auth_handler,
     }, app_name
 
