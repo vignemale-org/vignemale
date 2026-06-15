@@ -3,13 +3,22 @@ name: Release PyPI
 # Publie sur PyPI sur tag de version (vX.Y.Z) :
 #   - vignemale : wheels abi3 multi-plateformes (runtime Rust+PyO3 + CLI inclus) + sdist
 # Auth : Trusted Publishing (OIDC, pas de token) — configurer le publisher sur
-# PyPI pour le projet `vignemale` (org vignemale-org / repo vignemale / ce workflow /
-# environnement « pypi »).
+# PyPI (et/ou TestPyPI) pour le projet `vignemale` (org vignemale-org / repo
+# vignemale / ce workflow / environnement « pypi »).
+#
+# - tag vX.Y.Z         → publie sur PyPI (réel)
+# - run manuel (UI)    → choisir la cible : testpypi (essai blanc) ou pypi
 
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      target:
+        description: "Cible de publication"
+        type: choice
+        options: [testpypi, pypi]
+        default: testpypi
 
 permissions:
   contents: read
@@ -94,6 +103,18 @@ jobs:
           path: dist
           pattern: "*"
           merge-multiple: true
-      - uses: pypa/gh-action-pypi-publish@release/v1
+
+      # essai blanc : run manuel avec target=testpypi
+      - name: publier sur TestPyPI
+        if: github.event_name == 'workflow_dispatch' && inputs.target == 'testpypi'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
+          repository-url: https://test.pypi.org/legacy/
+
+      # réel : sur tag vX.Y.Z, ou run manuel avec target=pypi
+      - name: publier sur PyPI
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.target == 'pypi')
+        uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist
