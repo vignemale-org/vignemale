@@ -37,8 +37,11 @@ jobs:
           # cross-compilation via conteneur émulé casse dès qu'une dep compile du
           # C/asm (ring, aws-lc…). En natif, tout compile normalement.
           - { os: ubuntu-24.04-arm, target: aarch64 }
-          - { os: macos-13, target: x86_64 }
-          - { os: macos-14, target: aarch64 }
+          # macOS : un seul runner arm64 (macos-latest), les DEUX arch par
+          # cross-compilation (clang + SDK Apple universel = cross fiable, contrairement
+          # à Linux). Évite le runner macOS Intel, rare et lent en file d'attente.
+          - { os: macos-latest, target: x86_64-apple-darwin }
+          - { os: macos-latest, target: aarch64-apple-darwin }
           - { os: windows-latest, target: x64 }
     steps:
       - uses: actions/checkout@v4
