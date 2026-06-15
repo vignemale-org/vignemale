@@ -22,15 +22,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: arduino/setup-protoc@v3
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-
+      # Pas de setup-protoc : le build.rs vendore protoc (protoc-bin-vendored).
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
       - name: Tests Rust (core)
-        run: PROTOC="$(which protoc)" cargo test
+        run: cargo test
 
       - uses: actions/setup-python@v5
         with:
@@ -38,7 +35,7 @@ jobs:
 
       - name: Build binding PyO3 + SDK + CLI (un seul paquet, extras dev)
         working-directory: runtimes/python
-        run: PROTOC="$(which protoc)" pip install ".[dev]"
+        run: pip install ".[dev]"
 
       - name: Tests Python (pytest)
         working-directory: runtimes/python

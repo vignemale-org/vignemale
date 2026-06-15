@@ -749,9 +749,14 @@ pub(crate) fn make_listener(addr: SocketAddr, reuse_port: bool) -> anyhow::Resul
     let domain = if addr.is_ipv6() { Domain::IPV6 } else { Domain::IPV4 };
     let socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))?;
     socket.set_reuse_address(true)?;
+    // SO_REUSEPORT (partage du port entre process worker) n'existe que sous Unix.
+    // Sous Windows, le mode multi-process n'est pas supporté — on ignore le drapeau.
+    #[cfg(unix)]
     if reuse_port {
         socket.set_reuse_port(true)?;
     }
+    #[cfg(not(unix))]
+    let _ = reuse_port;
     socket.bind(&addr.into())?;
     socket.listen(1024)?;
     socket.set_nonblocking(true)?;

@@ -40,29 +40,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # protoc sur les runners mac/windows (Linux : installé dans le conteneur
-      # manylinux par before-script-linux ci-dessous).
-      - if: runner.os != 'Linux'
-        uses: arduino/setup-protoc@v3
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-
+      # Pas d'install protoc : le build.rs du runtime utilise un protoc vendoré
+      # (crate protoc-bin-vendored), hermétique sur tous les OS/arch (y compris
+      # le conteneur manylinux et la cross-compilation aarch64). TLS Postgres en
+      # rustls → pas d'OpenSSL système non plus.
       - uses: PyO3/maturin-action@v1
         with:
           working-directory: runtimes/python
           target: ${{ matrix.target }}
           args: --release --out dist
           manylinux: auto
-          # conteneur manylinux : protoc récent (types bien-connus dans ../include)
-          # pour build.rs/prost. On EXTRAIT avec Python (présent : /opt/python/cp39)
-          # — pas d'unzip ni de gestionnaire de paquets (le conteneur aarch64 est
-          # CentOS 7 EOL, yum HS). Plus besoin d'OpenSSL : TLS Postgres en rustls.
-          before-script-linux: |
-            PB=28.3
-            curl -sSLO https://github.com/protocolbuffers/protobuf/releases/download/v${PB}/protoc-${PB}-linux-x86_64.zip
-            /opt/python/cp39-cp39/bin/python -c "import zipfile; zipfile.ZipFile('protoc-${PB}-linux-x86_64.zip').extractall('/usr/local')"
-            chmod +x /usr/local/bin/protoc
-            /usr/local/bin/protoc --version
 
       - uses: actions/upload-artifact@v4
         with:
@@ -77,9 +64,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - uses: arduino/setup-protoc@v3
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: sdist du runtime (SDK + CLI dans un seul paquet)
         uses: PyO3/maturin-action@v1

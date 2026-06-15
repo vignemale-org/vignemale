@@ -52,3 +52,7 @@ hex = "0.4"
 
 [build-dependencies]
 prost-build = "0.12"
+# protoc vendoré (binaire prébuilt pour l'arch HÔTE) — build.rs pose PROTOC
+# lui-même. Plus aucune install protoc en CI : marche sur Linux/macOS/Windows
+# et en cross-compilation (build.rs tourne sur l'hôte, ex. x86_64 pour aarch64).
+protoc-bin-vendored = "3"
