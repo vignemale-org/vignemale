@@ -4,7 +4,11 @@ name: Runtime image
 # multi-arch. `vignemale build` en part → builds d'app en quelques secondes.
 #
 # Déclenchée sur tag de version (vX.Y.Z) et manuellement. Pas sur chaque push :
-# la compilation Rust en arm64 émulé (QEMU) est lente — réservée aux releases.
+# une compilation Rust par release suffit.
+#
+# Parallélisation : un job par plateforme (amd64 / arm64) qui pousse PAR DIGEST,
+# puis un job `merge` qui assemble le manifeste multi-arch. Les deux builds
+# tournent en même temps → temps mur ≈ le plus lent, pas la somme.
 
 on:
   push:
@@ -12,18 +16,82 @@ on:
   workflow_dispatch:
 
 jobs:
-  publish:
-    runs-on: ubuntu-latest
+  build:
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
       packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          # arm64 en QEMU sur un runner amd64 (marche partout, mais émulé/lent).
+          # Si le plan GitHub a des runners arm natifs, remplacer par
+          #   runner: ubuntu-24.04-arm
+          # → build natif, bien plus rapide.
+          - platform: linux/arm64
+            runner: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - name: Nom d'image (GHCR exige des minuscules)
         run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/vignemale-python" >> "$GITHUB_ENV"
 
+      - name: Clé de plateforme (cache / artefact)
+        run: echo "PLATFORM_KEY=${MATRIX_PLATFORM//\//-}" >> "$GITHUB_ENV"
+        env:
+          MATRIX_PLATFORM: ${{ matrix.platform }}
+
       - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/runtime.Dockerfile
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ env.PLATFORM_KEY }}
+          cache-to: type=gha,mode=max,scope=${{ env.PLATFORM_KEY }}
+
+      - name: Exporte le digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ env.PLATFORM_KEY }}
+          path: /tmp/digests/*
+          retention-days: 1
+          if-no-files-found: error
+
+  merge:
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Nom d'image (GHCR exige des minuscules)
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/vignemale-python" >> "$GITHUB_ENV"
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+          merge-multiple: true
+
       - uses: docker/setup-buildx-action@v3
 
       - uses: docker/login-action@v3
@@ -40,13 +108,12 @@ jobs:
             type=ref,event=tag
             type=raw,value=latest
 
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: docker/runtime.Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Assemble le manifeste multi-arch et pousse
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ env.IMAGE }}@sha256:%s ' *)
+
+      - name: Vérifie
+        run: docker buildx imagetools inspect ${{ env.IMAGE }}:latest
