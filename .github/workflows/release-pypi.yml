@@ -1,10 +1,9 @@
 name: Release PyPI
 
 # Publie sur PyPI sur tag de version (vX.Y.Z) :
-#   - vignemale (runtime Rust+PyO3) : wheels abi3 multi-plateformes via maturin
-#   - vignemale-cli (pur Python) : sdist + wheel
+#   - vignemale : wheels abi3 multi-plateformes (runtime Rust+PyO3 + CLI inclus) + sdist
 # Auth : Trusted Publishing (OIDC, pas de token) — configurer le publisher sur
-# PyPI pour chaque projet (org vignemale-org / repo vignemale / ce workflow /
+# PyPI pour le projet `vignemale` (org vignemale-org / repo vignemale / ce workflow /
 # environnement « pypi »).
 
 on:
@@ -70,19 +69,16 @@ jobs:
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: sdist du runtime
+      - name: sdist du runtime (SDK + CLI dans un seul paquet)
         uses: PyO3/maturin-action@v1
         with:
           working-directory: runtimes/python
           command: sdist
           args: --out dist
 
-      - name: build cli (pur Python)
-        run: |
-          pipx run build --outdir runtimes/python/dist ./cli
       - uses: actions/upload-artifact@v4
         with:
-          name: sdist-pure
+          name: sdist
           path: runtimes/python/dist/*
 
   # ---- publication PyPI (Trusted Publishing, OIDC) ----

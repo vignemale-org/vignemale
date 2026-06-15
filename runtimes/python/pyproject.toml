@@ -12,10 +12,19 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pydantic-ai-slim[anthropic]>=1.0"]
+# `vignemale[cli]` : l'outil dev (run/check/gen/build…). Séparé du runtime pour
+# que la prod (`pip install vignemale`) reste sur pydantic seul.
+cli = ["griffe>=1.0", "protobuf>=5"]
+dev = ["pytest>=8", "pydantic-ai-slim[anthropic]>=1.0", "griffe>=1.0", "protobuf>=5"]
+
+# La commande `vignemale` (fournie par l'extra [cli]).
+[project.scripts]
+vignemale = "vignemale_cli.cli:main"
 
 [tool.maturin]
 # Projet mixte : code Python sous python/, extension Rust = vignemale._core
 python-source = "python"
+# inclut le SDK (vignemale) ET l'outil CLI (vignemale_cli) dans le même wheel.
+python-packages = ["vignemale", "vignemale_cli"]
 module-name = "vignemale._core"
 features = ["pyo3/extension-module"]

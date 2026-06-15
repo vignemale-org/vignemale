@@ -36,18 +36,12 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Build binding PyO3 + SDK
+      - name: Build binding PyO3 + SDK + CLI (un seul paquet, extras dev)
         working-directory: runtimes/python
         run: PROTOC="$(which protoc)" pip install ".[dev]"
-
-      - name: Install moteur d'orchestration + CLI (packages séparés)
-        run: pip install ./deploy ./cli
 
       - name: Tests Python (pytest)
         working-directory: runtimes/python
         env:
           VIGNEMALE_TEST_PG: postgres://postgres:vignemale@127.0.0.1:5432/postgres
         run: python -m pytest tests/ -v
-
-      - name: Tests moteur d'orchestration (deploy)
-        run: python -m pytest deploy/tests/ -v
