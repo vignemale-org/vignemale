@@ -32,8 +32,10 @@ DEFAULT_BASE_IMAGE = os.environ.get(
 _SRC_PARTS = ["Cargo.toml", "Cargo.lock", "runtimes", "proto"]
 # Exclus de la copie du contexte (lourds / inutiles au build).
 _IGNORE = shutil.ignore_patterns(
+    # NB : on garde vignemale_clients (clients générés) — ils sont REQUIS au
+    # runtime (les services les importent pour call() inter-services).
     "target", ".venv", "__pycache__", "*.pyc", ".pytest_cache",
-    "*.so", "dist", "*.egg-info", ".git", "vignemale_clients",
+    "*.so", "dist", "*.egg-info", ".git",
 )
 
 
