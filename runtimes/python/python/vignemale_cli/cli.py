@@ -224,6 +224,18 @@ def cmd_rgpd(args):
         print(_json.dumps(report, indent=2, ensure_ascii=False))
 
 
+def cmd_login(args):
+    from . import auth
+
+    auth.login()
+
+
+def cmd_logout(args):
+    from . import auth
+
+    auth.logout()
+
+
 def cmd_check(args):
     if args.sql:
         return _check_sql(args.path)
@@ -343,6 +355,14 @@ def main(argv=None):
         "--dry-run", action="store_true", help="forget : montre sans effacer"
     )
     p_rgpd.set_defaults(func=cmd_rgpd)
+
+    p_login = sub.add_parser(
+        "login", help="s'authentifier auprès de Vignemale Cloud (device-flow navigateur)"
+    )
+    p_login.set_defaults(func=cmd_login)
+
+    p_logout = sub.add_parser("logout", help="supprimer les identifiants stockés")
+    p_logout.set_defaults(func=cmd_logout)
 
     args = parser.parse_args(argv)
     args.func(args)
