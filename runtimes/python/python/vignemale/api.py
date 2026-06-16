@@ -317,6 +317,35 @@ def serve_gateway(routes: list, addr: str = "127.0.0.1:8080", reuse_port: bool =
         print("vignemale: gateway arrêtée", flush=True)
 
 
+def _endpoints_to_serve() -> list:
+    """Endpoints à servir par CE conteneur.
+
+    Topologie « un conteneur par service » : le deploy pose `VIGNEMALE_SERVICE_NAME`
+    → on ne sert QUE les endpoints de ce service (les autres restent joignables via
+    `call()` HTTP vers leur conteneur). Sans cette variable (mono) → tout est servi.
+    """
+    svc = os.environ.get("VIGNEMALE_SERVICE_NAME")
+    if not svc:
+        return list(_endpoints)
+    from .service import _services
+
+    modules = [m for (n, m) in _services if n == svc]
+    if not modules:
+        # nom de service inconnu (mauvaise config) : on sert tout plutôt qu'un
+        # conteneur vide, en le signalant.
+        print(
+            f"vignemale: VIGNEMALE_SERVICE_NAME={svc!r} ne correspond à aucun "
+            "Service() déclaré — tous les endpoints sont servis.",
+            flush=True,
+        )
+        return list(_endpoints)
+
+    def in_service(module: str) -> bool:
+        return any(module == m or module.startswith(m + ".") for m in modules)
+
+    return [e for e in _endpoints if in_service(e[3].__module__)]  # e[3] = wrapper
+
+
 def serve(addr: str = "127.0.0.1:8080", reuse_port: bool = False) -> None:
     """Démarre le serveur HTTP.
 
@@ -324,10 +353,13 @@ def serve(addr: str = "127.0.0.1:8080", reuse_port: bool = False) -> None:
     passe à 503 `shutting_down`, plus aucune connexion acceptée, les requêtes
     en vol terminent (borné par `VIGNEMALE_SHUTDOWN_TIMEOUT`, 10 s).
     """
-    if _auth_required and _auth_handler is None:
+    endpoints = _endpoints_to_serve()
+    # validation de l'auth restreinte aux endpoints réellement servis (e[5] = auth)
+    protected = [e[0] for e in endpoints if e[5]]
+    if protected and _auth_handler is None:
         raise SystemExit(
             "vignemale: endpoint(s) protégé(s) sans @auth_handler déclaré : "
-            + ", ".join(_auth_required)
+            + ", ".join(protected)
         )
     import signal as _signal
 
@@ -339,10 +371,12 @@ def serve(addr: str = "127.0.0.1:8080", reuse_port: bool = False) -> None:
     except ValueError:
         pass  # pas dans le thread principal (tests…) : tant pis pour SIGTERM
 
-    print(f"vignemale: {len(_endpoints)} endpoint(s) sur http://{addr}", flush=True)
+    svc = os.environ.get("VIGNEMALE_SERVICE_NAME")
+    suffix = f" (service « {svc} »)" if svc else ""
+    print(f"vignemale: {len(endpoints)} endpoint(s) sur http://{addr}{suffix}", flush=True)
     try:
         _core.serve(
-            list(_endpoints),
+            endpoints,
             addr,
             _auth_adapter if _auth_handler is not None else None,
             list(_static_routes),
