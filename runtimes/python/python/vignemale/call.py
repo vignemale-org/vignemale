@@ -128,6 +128,10 @@ def _call_http(base_url: str, service: str, endpoint: str, body, params):
     }
     if auth_data:
         headers["x-vignemale-auth-data"] = auth_data
+    # pair privé (topologie services) : token d'invocation Scaleway
+    token = os.environ.get("VIGNEMALE_CONTAINER_TOKEN")
+    if token:
+        headers["X-Auth-Token"] = token
 
     url = f"{base_url.rstrip('/')}/__vignemale/call/{endpoint}"
     req = urllib.request.Request(url, data=payload, headers=headers)

@@ -76,6 +76,10 @@ pub(crate) async fn handle(
     if let Some(data) = &auth_data {
         req = req.header("x-vignemale-auth-data", data);
     }
+    // backends privés : token d'invocation Scaleway (sinon 403 à l'edge cloud)
+    if let Some(token) = &st.container_token {
+        req = req.header("X-Auth-Token", token);
+    }
     for (k, v) in headers.iter() {
         let name = k.as_str();
         if !is_hop_by_hop(name) && !name.starts_with("x-vignemale-") && name != "traceparent" {

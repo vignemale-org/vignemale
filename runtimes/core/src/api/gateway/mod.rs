@@ -34,6 +34,8 @@ pub(crate) struct GwState {
     pub routes: Vec<GatewayRoute>,
     pub auth: Option<Arc<dyn AuthHandler>>,
     pub secret: Option<String>,
+    /// Token d'invocation des conteneurs privés (X-Auth-Token) — topologie services.
+    pub container_token: Option<String>,
     pub client: reqwest::Client,
 }
 
@@ -53,6 +55,7 @@ pub async fn serve(
         routes,
         auth,
         secret: std::env::var("VIGNEMALE_SERVICE_SECRET").ok(),
+        container_token: std::env::var("VIGNEMALE_CONTAINER_TOKEN").ok().filter(|s| !s.is_empty()),
         client: reqwest::Client::new(),
     });
     let app = Router::new()
