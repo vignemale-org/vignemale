@@ -49,3 +49,43 @@ def test_service_inconnu_repli_sur_tout(monkeypatch):
     _setup(monkeypatch)
     monkeypatch.setenv("VIGNEMALE_SERVICE_NAME", "inexistant")
     assert sorted(e[0] for e in apimod._endpoints_to_serve()) == ["list_catalog", "list_orders"]
+
+
+def _epx(name, path, module, auth=False, expose=True):
+    def wrapper():
+        pass
+
+    wrapper.__module__ = module
+    return (name, "GET", path, wrapper, False, auth, None, None, expose)
+
+
+def test_gateway_routes(monkeypatch):
+    monkeypatch.setattr(
+        apimod,
+        "_endpoints",
+        [
+            _epx("o", "/orders", "orders", auth=True),
+            _epx("i", "/items/:id", "catalog"),  # préfixe statique = /items
+            _epx("a", "/admin/items", "catalog", expose=False),  # privé → exclu
+        ],
+    )
+    monkeypatch.setattr(svcmod, "_services", [("orders", "orders"), ("catalog", "catalog")])
+    monkeypatch.setenv("VIGNEMALE_SERVICE_ORDERS", "https://o.scw")
+    monkeypatch.setenv("VIGNEMALE_SERVICE_CATALOG", "https://c.scw")
+
+    routes = apimod._gateway_routes()
+    byprefix = {(p, s): (u, a) for (p, s, u, a) in routes}
+    # /items/:id → préfixe /items, vers l'URL de catalog
+    assert byprefix[("/items", "catalog")] == ("https://c.scw", False)
+    # auth de l'endpoint propagée au niveau route
+    assert byprefix[("/orders", "orders")] == ("https://o.scw", True)
+    # endpoint privé jamais routé
+    assert not any(p == "/admin/items" for (p, s, u, a) in routes)
+
+
+def test_gateway_routes_ignore_service_sans_url(monkeypatch):
+    # un service dont l'URL n'est pas connue (env absente) n'est pas routé
+    monkeypatch.setattr(apimod, "_endpoints", [_epx("o", "/orders", "orders")])
+    monkeypatch.setattr(svcmod, "_services", [("orders", "orders")])
+    monkeypatch.delenv("VIGNEMALE_SERVICE_ORDERS", raising=False)
+    assert apimod._gateway_routes() == []

@@ -300,6 +300,46 @@ def _auth_adapter(token: str):
     return data
 
 
+def _gateway_routes() -> list:
+    """Construit les routes de la gateway depuis les endpoints chargés + les URLs
+    des services (VIGNEMALE_SERVICE_<NOM>, posées par le deploy à la découverte).
+
+    Renvoie une liste de (prefix, service, upstream_url, requires_auth). Le préfixe
+    est la partie statique du path (jusqu'au 1er segment de paramètre). Les
+    endpoints privés (expose=False) ne sont jamais routés publiquement.
+    """
+    from .service import _services
+
+    def service_of(module: str):
+        for n, m in _services:
+            if module == m or module.startswith(m + "."):
+                return n
+        return None
+
+    def static_prefix(path: str) -> str:
+        segs = []
+        for seg in path.strip("/").split("/"):
+            if not seg or seg[0] in (":", "{"):
+                break
+            segs.append(seg)
+        return "/" + "/".join(segs)
+
+    # (prefix, service, url) → requires_auth (OR des endpoints sous ce préfixe)
+    routes: dict = {}
+    for name, method, path, wrapper, stream, auth, timeout, body_limit, expose in _endpoints:
+        if not expose:
+            continue  # privé : jamais exposé via la gateway
+        svc = service_of(wrapper.__module__)
+        if svc is None:
+            continue
+        url = os.environ.get("VIGNEMALE_SERVICE_" + svc.upper().replace("-", "_"))
+        if not url:
+            continue  # URL du service inconnue → non routable
+        key = (static_prefix(path), svc, url)
+        routes[key] = routes.get(key, False) or bool(auth)
+    return [(pref, svc, url, req) for (pref, svc, url), req in routes.items()]
+
+
 def serve_gateway(routes: list, addr: str = "127.0.0.1:8080", reuse_port: bool = False) -> None:
     """Démarre la GATEWAY : l'entrée unique d'une app multi-services déployée.
 

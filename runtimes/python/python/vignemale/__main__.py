@@ -127,6 +127,16 @@ def main(argv=None) -> None:
     if path is None:
         raise SystemExit("usage: python -m vignemale <fichier|dossier> [--addr host:port]")
 
+    # Rôle gateway (topologie « un conteneur par service ») : même image, mais on
+    # charge l'app pour connaître les paths/services, on construit les routes
+    # depuis les URLs des services (env de découverte) et on sert la GATEWAY.
+    if os.environ.get("VIGNEMALE_ROLE") == "gateway":
+        _load_app(path)
+        from vignemale.api import _gateway_routes, serve_gateway
+
+        serve_gateway(_gateway_routes(), addr)
+        return
+
     workers = int(os.environ.get("VIGNEMALE_WORKERS", "1"))
     if workers > 1:
         _serve_workers(path, addr, workers)
