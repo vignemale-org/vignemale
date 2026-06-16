@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use axum::body::{Body, Bytes};
 use axum::extract::rejection::BytesRejection;
-use axum::extract::{DefaultBodyLimit, RawPathParams, RawQuery};
+use axum::extract::{DefaultBodyLimit, OriginalUri, RawPathParams, RawQuery};
 use axum::http::header::CONTENT_TYPE;
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::sse::{Event, Sse};
@@ -155,6 +155,80 @@ async fn run_auth(
         AuthOutcome::Authenticated(data) => Ok(Some(data)),
         AuthOutcome::Denied { status, body } => Err(Response { status, body }),
     }
+}
+
+/// Résout l'identité d'une requête entrante sur une route publique.
+///
+/// - **mesh backend** (`VIGNEMALE_SERVICE_NAME` posé → conteneur derrière une
+///   gateway) : la requête DOIT porter une signature svcauth valide (gateway ou
+///   service pair) ; on fait alors CONFIANCE à l'identité propagée
+///   (`x-vignemale-auth-data`) sans rejouer le auth handler. Un hit direct non
+///   signé est rejeté (401) → la gateway est l'entrée effective.
+/// - **edge** (mono / pas de mesh) : authentification au bord via `run_auth`.
+#[allow(clippy::too_many_arguments)]
+async fn resolve_inbound_auth(
+    auth: &Option<Arc<dyn AuthHandler>>,
+    headers: &HeaderMap,
+    query: &Option<String>,
+    requires_auth: bool,
+    mesh: bool,
+    sig_path: &str,
+    body: &[u8],
+) -> Result<Option<String>, Response> {
+    if !mesh {
+        return if requires_auth {
+            run_auth(auth, headers, query).await
+        } else {
+            Ok(None)
+        };
+    }
+    let h = |name: &str| {
+        headers
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+    };
+    let sig = h("x-vignemale-signature");
+    if sig.is_empty() {
+        return Err(Response {
+            status: 401,
+            body: error_json(
+                "unauthenticated",
+                "appel non signé sur un service en mode mesh (passez par la gateway)",
+                None,
+            ),
+        });
+    }
+    let secrets = super::svcauth::accepted_secrets_from_env();
+    if secrets.is_empty() {
+        return Err(Response {
+            status: 401,
+            body: error_json("unauthenticated", "VIGNEMALE_SERVICE_SECRET non configuré", None),
+        });
+    }
+    let auth_header = h("x-vignemale-auth-data");
+    if let Err(reason) = super::svcauth::verify_any(
+        &secrets,
+        h("x-vignemale-date"),
+        h("x-vignemale-caller"),
+        sig_path,
+        body,
+        auth_header.as_bytes(),
+        sig,
+        super::svcauth::now_epoch(),
+    ) {
+        return Err(Response {
+            status: 401,
+            body: error_json("unauthenticated", reason, None),
+        });
+    }
+    if requires_auth && auth_header.is_empty() {
+        return Err(Response {
+            status: 401,
+            body: error_json("unauthenticated", "endpoint protégé : identité non propagée", None),
+        });
+    }
+    Ok((!auth_header.is_empty()).then(|| auth_header.to_string()))
 }
 
 fn deny_response(resp: Response, request_id: &str) -> AxumResponse {
@@ -315,6 +389,12 @@ pub fn build_router(
     statics: Vec<StaticRoute>,
 ) -> anyhow::Result<Router> {
     let default_body_limit = env_u64("VIGNEMALE_MAX_BODY", 10 * 1024 * 1024) as usize;
+    // Conteneur derrière une gateway : le deploy pose VIGNEMALE_REQUIRE_SVCAUTH=1
+    // (uniquement quand une gateway est déployée). Le trafic public arrive alors
+    // signé par la gateway → on exige la signature et on fait confiance à l'auth
+    // propagée. NB : distinct de VIGNEMALE_SERVICE_NAME (filtrage/découverte), car
+    // un service nommé peut rester joignable au bord sans gateway.
+    let mesh_backend = std::env::var("VIGNEMALE_REQUIRE_SVCAUTH").is_ok_and(|v| v == "1");
 
     // Index des endpoints unaires pour les appels service-à-service signés.
     let mut internal: std::collections::HashMap<String, (Arc<dyn Handler>, bool)> =
@@ -349,6 +429,7 @@ pub fn build_router(
                     filter,
                     move |params: RawPathParams,
                           RawQuery(query): RawQuery,
+                          OriginalUri(orig_uri): OriginalUri,
                           headers: HeaderMap,
                           body: Result<Bytes, BytesRejection>| {
                         let handler = handler.clone();
@@ -358,37 +439,23 @@ pub fn build_router(
                             let request_id = crate::observability::request_id();
                             let started = std::time::Instant::now();
                             let (trace_id, traceparent) = trace_context(&headers);
-                            let auth_data = if requires_auth {
-                                match run_auth(&auth, &headers, &query).await {
-                                    Ok(data) => data,
-                                    Err(denied) => {
-                                        log_request(
-                                            &name,
-                                            &method,
-                                            &path,
-                                            denied.status,
-                                            started.elapsed().as_millis() as u64,
-                                            &request_id,
-                                            &trace_id,
-                                        );
-                                        return deny_response(denied, &request_id);
-                                    }
-                                }
-                            } else {
-                                None
-                            };
+                            // body d'abord (nécessaire pour vérifier la signature en mesh)
                             let body = match check_body(body) {
                                 Ok(b) => b,
                                 Err(denied) => {
-                                    log_request(
-                                        &name,
-                                        &method,
-                                        &path,
-                                        denied.status,
-                                        started.elapsed().as_millis() as u64,
-                                        &request_id,
-                                        &trace_id,
-                                    );
+                                    log_request(&name, &method, &path, denied.status,
+                                        started.elapsed().as_millis() as u64, &request_id, &trace_id);
+                                    return deny_response(denied, &request_id);
+                                }
+                            };
+                            let auth_data = match resolve_inbound_auth(
+                                &auth, &headers, &query, requires_auth, mesh_backend,
+                                orig_uri.path(), &body,
+                            ).await {
+                                Ok(data) => data,
+                                Err(denied) => {
+                                    log_request(&name, &method, &path, denied.status,
+                                        started.elapsed().as_millis() as u64, &request_id, &trace_id);
                                     return deny_response(denied, &request_id);
                                 }
                             };
@@ -454,6 +521,7 @@ pub fn build_router(
                     filter,
                     move |params: RawPathParams,
                           RawQuery(query): RawQuery,
+                          OriginalUri(orig_uri): OriginalUri,
                           headers: HeaderMap,
                           body: Result<Bytes, BytesRejection>| {
                         let handler = handler.clone();
@@ -463,38 +531,23 @@ pub fn build_router(
                             let request_id = crate::observability::request_id();
                             let started = std::time::Instant::now();
                             let (trace_id, traceparent) = trace_context(&headers);
-                            // l'auth se joue AVANT d'ouvrir le flux → vrai 401
-                            let auth_data = if requires_auth {
-                                match run_auth(&auth, &headers, &query).await {
-                                    Ok(data) => data,
-                                    Err(denied) => {
-                                        log_request(
-                                            &name,
-                                            &method,
-                                            &path,
-                                            denied.status,
-                                            started.elapsed().as_millis() as u64,
-                                            &request_id,
-                                            &trace_id,
-                                        );
-                                        return deny_response(denied, &request_id);
-                                    }
-                                }
-                            } else {
-                                None
-                            };
                             let body = match check_body(body) {
                                 Ok(b) => b,
                                 Err(denied) => {
-                                    log_request(
-                                        &name,
-                                        &method,
-                                        &path,
-                                        denied.status,
-                                        started.elapsed().as_millis() as u64,
-                                        &request_id,
-                                        &trace_id,
-                                    );
+                                    log_request(&name, &method, &path, denied.status,
+                                        started.elapsed().as_millis() as u64, &request_id, &trace_id);
+                                    return deny_response(denied, &request_id);
+                                }
+                            };
+                            // l'auth se joue AVANT d'ouvrir le flux → vrai 401
+                            let auth_data = match resolve_inbound_auth(
+                                &auth, &headers, &query, requires_auth, mesh_backend,
+                                orig_uri.path(), &body,
+                            ).await {
+                                Ok(data) => data,
+                                Err(denied) => {
+                                    log_request(&name, &method, &path, denied.status,
+                                        started.elapsed().as_millis() as u64, &request_id, &trace_id);
                                     return deny_response(denied, &request_id);
                                 }
                             };
