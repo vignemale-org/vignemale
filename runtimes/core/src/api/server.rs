@@ -619,7 +619,7 @@ pub fn build_router(
                         let caller = hdr("x-vignemale-caller");
                         // identité propagée — lue AVANT la vérif car incluse dans la signature.
                         let auth_header = hdr("x-vignemale-auth-data");
-                        let mut finish = |resp: Response| {
+                        let finish = |resp: Response| {
                             tracing::info!(
                                 target: "vignemale::api",
                                 endpoint = %endpoint, caller = %caller,
