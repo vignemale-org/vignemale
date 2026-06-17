@@ -179,7 +179,9 @@ def extract_path(path: str) -> tuple[dict, str]:
         mod = griffe.load(modname, search_paths=[path])
         svc, eps, mods, dbs, auth_fn, modmods, bks, secs = _extract_module(mod)
         if eps or svc:
-            services.append({"name": svc or modname, "endpoints": eps, "databases": dbs})
+            services.append(
+                {"name": svc or modname, "endpoints": eps, "databases": dbs, "buckets": bks}
+            )
         models.update(mods)
         model_modules.update(modmods)
         databases.extend(db for db in dbs if db not in databases)
@@ -274,6 +276,10 @@ def build_meta(extracted: dict, app_name: str) -> "meta.Data":
         svc.name = svc_info["name"]
         svc.rel_path = "."
         svc.databases.extend(svc_info.get("databases", []))
+        # appartenance bucket → service (utilisée pour relier le bucket à son
+        # service dans l'aperçu d'infra).
+        for b in svc_info.get("buckets", []):
+            svc.buckets.add().bucket = b
         for ep in svc_info["endpoints"]:
             rpc = svc.rpcs.add()
             rpc.name = ep["name"]
