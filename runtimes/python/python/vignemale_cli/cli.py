@@ -236,6 +236,12 @@ def cmd_logout(args):
     auth.logout()
 
 
+def cmd_deploy(args):
+    from .deploy import deploy
+
+    raise SystemExit(deploy(args.path))
+
+
 def cmd_check(args):
     if args.sql:
         return _check_sql(args.path)
@@ -363,6 +369,12 @@ def main(argv=None):
 
     p_logout = sub.add_parser("logout", help="supprimer les identifiants stockés")
     p_logout.set_defaults(func=cmd_logout)
+
+    p_deploy = sub.add_parser(
+        "deploy", help="push-to-deploy : pousse l'app vers le control plane (auth par token)"
+    )
+    p_deploy.add_argument("path", nargs="?", default=".", help="dossier de l'app (défaut: .)")
+    p_deploy.set_defaults(func=cmd_deploy)
 
     args = parser.parse_args(argv)
     args.func(args)
