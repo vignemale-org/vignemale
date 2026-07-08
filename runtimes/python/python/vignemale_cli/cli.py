@@ -242,6 +242,12 @@ def cmd_deploy(args):
     raise SystemExit(deploy(args.path))
 
 
+def cmd_link(args):
+    from .link import link
+
+    raise SystemExit(link(args.name, args.path))
+
+
 def cmd_check(args):
     if args.sql:
         return _check_sql(args.path)
@@ -375,6 +381,13 @@ def main(argv=None):
     )
     p_deploy.add_argument("path", nargs="?", default=".", help="dossier de l'app (défaut: .)")
     p_deploy.set_defaults(func=cmd_deploy)
+
+    p_link = sub.add_parser(
+        "link", help="rattache ce dépôt à un projet créé dans le panel (écrit pyproject)"
+    )
+    p_link.add_argument("name", help="nom du projet (tel que créé dans le panel)")
+    p_link.add_argument("path", nargs="?", default=".", help="dossier de l'app (défaut: .)")
+    p_link.set_defaults(func=cmd_link)
 
     args = parser.parse_args(argv)
     args.func(args)
