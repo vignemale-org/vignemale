@@ -242,6 +242,12 @@ def cmd_deploy(args):
     raise SystemExit(deploy(args.path))
 
 
+def cmd_init(args):
+    from .init import init
+
+    raise SystemExit(init(args.name, args.path))
+
+
 def cmd_link(args):
     from .link import link
 
@@ -298,6 +304,13 @@ def main(argv=None):
         description="Déploie tes agents IA en production, depuis Python.",
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p_init = sub.add_parser(
+        "init", help="scaffold un projet de base (app.py + pyproject + .gitignore)"
+    )
+    p_init.add_argument("name", nargs="?", default=".", help="nom du projet (défaut: dossier courant)")
+    p_init.add_argument("path", nargs="?", default=".", help="où créer le projet (défaut: .)")
+    p_init.set_defaults(func=cmd_init)
 
     p_run = sub.add_parser("run", help="lance l'app en local (découvre les @api et sert)")
     p_run.add_argument("path", help="fichier ou dossier de l'app")
