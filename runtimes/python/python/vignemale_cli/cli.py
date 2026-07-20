@@ -156,6 +156,9 @@ def _run_workers(path: str, addr: str, workers: int) -> None:
 
 
 def cmd_run(args):
+    from vignemale.api import print_banner
+
+    print_banner()
     # Infrastructure-from-Code: provision the local infra BEFORE importing the code.
     workers = int(os.environ.get("VIGNEMALE_WORKERS", "1"))
     if workers > 1:
@@ -208,7 +211,17 @@ def cmd_gdpr(args):
     from vignemale import gdpr
 
     if args.action == "map":
-        _load_app(args.path)  # the map is pure metadata: no DB needed
+        # The map is pure metadata: no DB needed. But an app may touch the DB at
+        # import time (e.g. `ensure_table()` at module top level); the table
+        # models are registered before that runs, so we can still emit the map —
+        # just warn that the import stopped early rather than crashing.
+        try:
+            _load_app(args.path)
+        except Exception as exc:  # noqa: BLE001 — best-effort metadata load
+            print(
+                f"vignemale: app not fully loaded for the map ({exc})",
+                file=sys.stderr,
+            )
         print(_json.dumps(gdpr.data_map(), indent=2, ensure_ascii=False))
         return
 

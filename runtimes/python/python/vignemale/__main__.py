@@ -128,6 +128,10 @@ def main(argv=None) -> None:
     if path is None:
         raise SystemExit("usage: python -m vignemale <file|directory> [--addr host:port]")
 
+    from vignemale.api import print_banner
+
+    print_banner()
+
     # Gateway role ("one container per service" topology): same image, but we
     # load the app to know the paths/services, build the routes from the
     # services' URLs (discovery env) and serve the GATEWAY.
