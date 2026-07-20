@@ -1,5 +1,5 @@
-"""ORM tiers (façon Encore) : connection_string + migrations .sql appliquées
-au run. Vérifié avec SQLAlchemy sur l'exemple blog."""
+"""Third-party ORM (Encore-style): connection_string + .sql migrations applied
+at run. Verified with SQLAlchemy on the blog example."""
 
 import json
 import os
@@ -12,13 +12,13 @@ import pytest
 from conftest import EXAMPLES, Server, free_port
 
 PG = os.environ.get("VIGNEMALE_TEST_PG")
-needs_pg = pytest.mark.skipif(not PG, reason="pose VIGNEMALE_TEST_PG")
+needs_pg = pytest.mark.skipif(not PG, reason="set VIGNEMALE_TEST_PG")
 try:
     import sqlalchemy  # noqa: F401
     HAS_SA = True
 except ImportError:
     HAS_SA = False
-needs_sa = pytest.mark.skipif(not HAS_SA, reason="sqlalchemy non installé")
+needs_sa = pytest.mark.skipif(not HAS_SA, reason="sqlalchemy not installed")
 
 
 def test_connection_string_est_le_dsn(monkeypatch):
@@ -41,10 +41,10 @@ def req(addr, path, data=None):
 
 @needs_pg
 @needs_sa
-def test_blog_migrations_et_orm_tiers():
+def test_blog_migrations_and_third_party_orm():
     import uuid
 
-    # base dédiée au test (les migrations créent la table une fois)
+    # database dedicated to the test (migrations create the table once)
     dbname = f"blog_test_{uuid.uuid4().hex[:8]}"
     import psycopg  # noqa
 
@@ -64,7 +64,7 @@ def test_blog_migrations_et_orm_tiers():
         addr, env=env, capture=True,
     )
     try:
-        # les 2 migrations ont créé posts + colonne published
+        # the 2 migrations created posts + the published column
         s, created = req(addr, "/posts", {"title": "Hello", "body": "b"})
         assert s == 200 and isinstance(created["id"], int)
         s, listing = req(addr, "/posts")

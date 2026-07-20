@@ -1,4 +1,4 @@
-"""App mal configurée : endpoint protégé sans @auth_handler → doit refuser de démarrer."""
+"""Misconfigured app: a protected endpoint without @auth_handler → must refuse to start."""
 
 from vignemale.api import api, serve
 

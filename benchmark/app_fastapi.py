@@ -1,4 +1,4 @@
-"""App benchmark — FastAPI, endpoints équivalents. Lancée par uvicorn (port 8081)."""
+"""Benchmark app — FastAPI, equivalent endpoints. Launched by uvicorn (port 8081)."""
 
 from fastapi import FastAPI
 from pydantic import BaseModel

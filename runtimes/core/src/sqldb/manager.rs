@@ -1,13 +1,13 @@
-// Pools de connexions par DSN + TLS — miroir du manager.rs d'Encore (réduit :
-// la config vient du DSN et de l'environnement ; le mapping infra.proto
-// arrivera avec le provisioning).
+// Connection pools per DSN + TLS — mirror of Encore's manager.rs (reduced:
+// the config comes from the DSN and the environment; the infra.proto mapping
+// will arrive with provisioning).
 
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
 use deadpool_postgres::{Manager as PgManager, ManagerConfig, Pool, RecyclingMethod};
 
-// Un pool par DSN, partagé pour tout le process (créé paresseusement).
+// One pool per DSN, shared for the whole process (created lazily).
 static POOLS: OnceLock<Mutex<HashMap<String, Pool>>> = OnceLock::new();
 
 fn env_u32(name: &str, default: u32) -> u32 {
@@ -17,9 +17,9 @@ fn env_u32(name: &str, default: u32) -> u32 {
         .unwrap_or(default)
 }
 
-/// Connecteur TLS en rustls : roots Mozilla (webpki-roots) par défaut, CA custom
-/// optionnelle (VIGNEMALE_SQLDB_CA_CERT), mode dev insecure
-/// (VIGNEMALE_SQLDB_TLS_INSECURE=1). Le `sslmode` du DSN décide si TLS est utilisé.
+/// TLS connector in rustls: Mozilla roots (webpki-roots) by default, optional
+/// custom CA (VIGNEMALE_SQLDB_CA_CERT), insecure dev mode
+/// (VIGNEMALE_SQLDB_TLS_INSECURE=1). The DSN's `sslmode` decides whether TLS is used.
 fn tls_connector() -> anyhow::Result<tokio_postgres_rustls::MakeRustlsConnect> {
     use std::sync::Arc;
     let provider = Arc::new(rustls::crypto::ring::default_provider());
@@ -38,8 +38,8 @@ fn tls_connector() -> anyhow::Result<tokio_postgres_rustls::MakeRustlsConnect> {
                 .map_err(|e| anyhow::anyhow!("VIGNEMALE_SQLDB_CA_CERT ({path}): {e}"))?;
             for cert in rustls_pemfile::certs(&mut pem.as_slice()) {
                 roots
-                    .add(cert.map_err(|e| anyhow::anyhow!("CA PEM invalide: {e}"))?)
-                    .map_err(|e| anyhow::anyhow!("ajout CA: {e}"))?;
+                    .add(cert.map_err(|e| anyhow::anyhow!("invalid CA PEM: {e}"))?)
+                    .map_err(|e| anyhow::anyhow!("adding CA: {e}"))?;
             }
         }
         rustls::ClientConfig::builder_with_provider(provider)
@@ -50,7 +50,7 @@ fn tls_connector() -> anyhow::Result<tokio_postgres_rustls::MakeRustlsConnect> {
     Ok(tokio_postgres_rustls::MakeRustlsConnect::new(config))
 }
 
-/// Vérificateur permissif pour le mode dev (VIGNEMALE_SQLDB_TLS_INSECURE).
+/// Permissive verifier for dev mode (VIGNEMALE_SQLDB_TLS_INSECURE).
 #[derive(Debug)]
 struct InsecureVerifier(std::sync::Arc<rustls::crypto::CryptoProvider>);
 
@@ -86,7 +86,7 @@ impl rustls::client::danger::ServerCertVerifier for InsecureVerifier {
     }
 }
 
-/// Renvoie (en le créant au besoin) le pool de connexions pour ce DSN.
+/// Returns (creating it if needed) the connection pool for this DSN.
 pub fn pool_for_dsn(dsn: &str) -> anyhow::Result<Pool> {
     let pools = POOLS.get_or_init(|| Mutex::new(HashMap::new()));
     let mut pools = pools.lock().expect("pools lock");
@@ -95,7 +95,7 @@ pub fn pool_for_dsn(dsn: &str) -> anyhow::Result<Pool> {
     }
     let cfg: tokio_postgres::Config = dsn
         .parse()
-        .map_err(|e| anyhow::anyhow!("DSN invalide: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("invalid DSN: {e}"))?;
     let mgr = PgManager::from_config(
         cfg,
         tls_connector()?,
@@ -116,7 +116,7 @@ pub fn pool_for_dsn(dsn: &str) -> anyhow::Result<Pool> {
 pub(crate) async fn get_conn(pool: &Pool) -> anyhow::Result<deadpool_postgres::Object> {
     pool.get().await.map_err(|e| match e {
         deadpool_postgres::PoolError::Timeout(_) => {
-            anyhow::anyhow!("timeout d'obtention d'une connexion (pool saturé ou base injoignable)")
+            anyhow::anyhow!("timed out acquiring a connection (pool saturated or database unreachable)")
         }
         other => anyhow::anyhow!("{other:#}"),
     })
@@ -128,6 +128,6 @@ mod tests {
 
     #[test]
     fn invalid_dsn_rejected() {
-        assert!(pool_for_dsn("pas un dsn").is_err());
+        assert!(pool_for_dsn("not a dsn").is_err());
     }
 }

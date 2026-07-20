@@ -1,7 +1,7 @@
-// Porté de `encore/runtimes/core/src/secrets/mod.rs`, rebrandé.
-// Résout un `SecretData` (env / embedded, encodage none/base64/gzip, sous-clé JSON)
-// en sa valeur réelle. Résolution paresseuse + mise en cache (OnceLock).
-// Le bloc de tests inline d'Encore est retiré (on teste depuis Python).
+// Ported from `encore/runtimes/core/src/secrets/mod.rs`, rebranded.
+// Resolves a `SecretData` (env / embedded, none/base64/gzip encoding, JSON sub-key)
+// to its actual value. Lazy resolution + caching (OnceLock).
+// Encore's inline test block is removed (we test from Python).
 
 use std::collections::HashMap;
 use std::fmt::Display;
@@ -287,7 +287,7 @@ mod tests {
 
     #[test]
     fn invalid_base64() {
-        let s = embedded(b"%%% pas du base64 %%%", Encoding::Base64, None);
+        let s = embedded(b"%%% not base64 %%%", Encoding::Base64, None);
         assert!(matches!(s.get(), Err(ResolveError::InvalidBase64)));
     }
 
@@ -302,7 +302,7 @@ mod tests {
                 encoding: Encoding::None as i32,
             }),
         }]);
-        let s = mgr.app_secret("api_key".into()).expect("secret déclaré");
+        let s = mgr.app_secret("api_key".into()).expect("declared secret");
         assert_eq!(s.get().unwrap(), b"sk-123");
         assert!(mgr.app_secret("absent".into()).is_none());
     }

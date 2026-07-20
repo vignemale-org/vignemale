@@ -1,17 +1,18 @@
-"""Point d'entrée PROD : `python -m vignemale <app>` charge l'app et sert.
+"""PROD entry point: `python -m vignemale <app>` loads the app and serves.
 
-À la différence de `vignemale run` (outil dev, dans vignemale-cli), ce point
-d'entrée ne dépend que du runtime (pydantic + le cœur Rust) — pas de griffe ni
-de provisioning. En prod, l'infrastructure est déjà créée et les variables
-`VIGNEMALE_*` sont posées par le deploy (provider switch) : il n'y a qu'à
-charger les modules de l'app (qui enregistrent les `@api`) et servir.
+Unlike `vignemale run` (dev tool, in vignemale-cli), this entry point only
+depends on the runtime (pydantic + the Rust core) — no griffe, no
+provisioning. In prod, the infrastructure already exists and the
+`VIGNEMALE_*` variables are set by the deploy (provider switch): all that is
+left is to load the app's modules (which register the `@api`) and serve.
 
-C'est ce que lance l'image Docker produite par `vignemale build`, ce qui permet
-de NE PAS embarquer l'outillage dev (CLI, griffe, protobuf) en production.
+This is what the Docker image produced by `vignemale build` launches, which
+makes it possible NOT to ship the dev tooling (CLI, griffe, protobuf) in
+production.
 
-Usage : python -m vignemale <fichier|dossier> [--addr host:port]
-        VIGNEMALE_ADDR    adresse d'écoute (défaut 0.0.0.0:8080)
-        VIGNEMALE_WORKERS nombre de process (défaut 1) — fork + SO_REUSEPORT
+Usage: python -m vignemale <file|directory> [--addr host:port]
+       VIGNEMALE_ADDR    listen address (default 0.0.0.0:8080)
+       VIGNEMALE_WORKERS number of processes (default 1) — fork + SO_REUSEPORT
 """
 
 import importlib
@@ -24,7 +25,7 @@ def _load_file(path: str) -> None:
     name = "__vig_" + os.path.splitext(os.path.basename(path))[0] + "__"
     spec = importlib.util.spec_from_file_location(name, path)
     mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)  # exécute les @api / Service → enregistre
+    spec.loader.exec_module(mod)  # executes the @api / Service → registers
 
 
 def _is_service_dir(path: str) -> bool:
@@ -56,14 +57,14 @@ def _load_app(path: str) -> None:
         sys.path.insert(0, os.path.dirname(path))
         _load_file(path)
     else:
-        raise SystemExit(f"vignemale: app introuvable : {path}")
+        raise SystemExit(f"vignemale: app not found: {path}")
 
 
 def _serve_workers(path: str, addr: str, workers: int) -> None:
-    """Multi-process : fork N workers partageant le port (SO_REUSEPORT).
+    """Multi-process: fork N workers sharing the port (SO_REUSEPORT).
 
-    Pas de provisioning ici (prod) : chaque worker charge l'app après son fork
-    et ouvre ses propres connexions — aucune socket héritée entre process.
+    No provisioning here (prod): each worker loads the app after its fork and
+    opens its own connections — no socket inherited across processes.
     """
     import signal
     import time
@@ -79,7 +80,7 @@ def _serve_workers(path: str, addr: str, workers: int) -> None:
             os._exit(0)
         children.append(pid)
 
-    print(f"vignemale: {workers} workers sur http://{addr}", flush=True)
+    print(f"vignemale: {workers} workers on http://{addr}", flush=True)
     stopping = {"v": False}
 
     def _stop(*_a):
@@ -88,7 +89,7 @@ def _serve_workers(path: str, addr: str, workers: int) -> None:
         stopping["v"] = True
         for pid in children:
             try:
-                os.kill(pid, signal.SIGINT)  # déclenche le drain gracieux
+                os.kill(pid, signal.SIGINT)  # triggers the graceful drain
             except ProcessLookupError:
                 pass
 
@@ -107,7 +108,7 @@ def _serve_workers(path: str, addr: str, workers: int) -> None:
         if not stopping["v"] and alive:
             time.sleep(0.1)
             _stop()
-    print("vignemale: workers arrêtés", flush=True)
+    print("vignemale: workers stopped", flush=True)
 
 
 def main(argv=None) -> None:
@@ -125,11 +126,11 @@ def main(argv=None) -> None:
         else:
             i += 1
     if path is None:
-        raise SystemExit("usage: python -m vignemale <fichier|dossier> [--addr host:port]")
+        raise SystemExit("usage: python -m vignemale <file|directory> [--addr host:port]")
 
-    # Rôle gateway (topologie « un conteneur par service ») : même image, mais on
-    # charge l'app pour connaître les paths/services, on construit les routes
-    # depuis les URLs des services (env de découverte) et on sert la GATEWAY.
+    # Gateway role ("one container per service" topology): same image, but we
+    # load the app to know the paths/services, build the routes from the
+    # services' URLs (discovery env) and serve the GATEWAY.
     if os.environ.get("VIGNEMALE_ROLE") == "gateway":
         _load_app(path)
         from vignemale.api import _gateway_routes, serve_gateway

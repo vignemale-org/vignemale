@@ -1,10 +1,10 @@
-// Provider Object Storage — client S3 focalisé (Scaleway / MinIO / AWS).
+// Object Storage provider — focused S3 client (Scaleway / MinIO / AWS).
 //
-// La construction du client (`LazyS3Client`) est adaptée de
-// `encore/runtimes/core/src/objects/s3/mod.rs`. Les opérations sont volontairement
-// minimales et SANS l'instrumentation `trace` ni le multi-provider (gcs/noop) du
-// subsystem complet d'Encore — on rebranchera tout ça plus tard. Suffisant pour
-// tester de bout en bout contre Scaleway / MinIO.
+// The client construction (`LazyS3Client`) is adapted from
+// `encore/runtimes/core/src/objects/s3/mod.rs`. The operations are deliberately
+// minimal and WITHOUT the `trace` instrumentation or the multi-provider (gcs/noop)
+// of Encore's complete subsystem — we will wire all that back later. Enough to
+// test end-to-end against Scaleway / MinIO.
 
 use std::sync::Arc;
 
@@ -13,14 +13,14 @@ use aws_sdk_s3 as s3;
 use crate::secrets::{Manager, Secret};
 use crate::vignemale::runtime::v1 as pb;
 
-/// Une poignée vers un bucket S3 (un cluster + le nom cloud du bucket).
+/// A handle to an S3 bucket (a cluster + the bucket's cloud name).
 pub struct Bucket {
     client: Arc<LazyS3Client>,
     cloud_name: String,
 }
 
-/// Construit un `Bucket` depuis la config d'un cluster (provider switch S3) + le
-/// bucket logique. Résout le secret `secret_access_key` via le module `secrets`.
+/// Builds a `Bucket` from a cluster's config (S3 provider switch) + the
+/// logical bucket. Resolves the `secret_access_key` secret via the `secrets` module.
 pub fn bucket_from_cluster(cluster: &pb::BucketCluster, bucket: &pb::Bucket) -> anyhow::Result<Bucket> {
     match &cluster.provider {
         Some(pb::bucket_cluster::Provider::S3(s3cfg)) => {
@@ -34,12 +34,12 @@ pub fn bucket_from_cluster(cluster: &pb::BucketCluster, bucket: &pb::Bucket) -> 
                 cloud_name: bucket.cloud_name.clone(),
             })
         }
-        _ => anyhow::bail!("seul le provider S3 est supporté pour l'instant"),
+        _ => anyhow::bail!("only the S3 provider is supported for now"),
     }
 }
 
 impl Bucket {
-    /// Crée le bucket s'il n'existe pas (idempotent).
+    /// Creates the bucket if it does not exist (idempotent).
     pub async fn create_if_not_exists(&self) -> anyhow::Result<()> {
         let client = self.client.get().await;
         match client.create_bucket().bucket(&self.cloud_name).send().await {
@@ -55,7 +55,7 @@ impl Bucket {
         }
     }
 
-    /// Écrit un objet.
+    /// Writes an object.
     pub async fn put(&self, key: &str, data: Vec<u8>) -> anyhow::Result<()> {
         let client = self.client.get().await;
         client
@@ -69,7 +69,7 @@ impl Bucket {
         Ok(())
     }
 
-    /// Lit le contenu d'un objet.
+    /// Reads the content of an object.
     pub async fn get(&self, key: &str) -> anyhow::Result<Vec<u8>> {
         let client = self.client.get().await;
         let out = client
@@ -87,7 +87,7 @@ impl Bucket {
         Ok(data.into_bytes().to_vec())
     }
 
-    /// Indique si un objet existe.
+    /// Indicates whether an object exists.
     pub async fn exists(&self, key: &str) -> anyhow::Result<bool> {
         let client = self.client.get().await;
         match client.head_object().bucket(&self.cloud_name).key(key).send().await {
@@ -103,7 +103,7 @@ impl Bucket {
         }
     }
 
-    /// Liste les clés sous un préfixe.
+    /// Lists the keys under a prefix.
     pub async fn list(&self, prefix: &str) -> anyhow::Result<Vec<String>> {
         let client = self.client.get().await;
         let out = client
@@ -120,7 +120,7 @@ impl Bucket {
             .collect())
     }
 
-    /// Supprime un objet.
+    /// Deletes an object.
     pub async fn delete(&self, key: &str) -> anyhow::Result<()> {
         let client = self.client.get().await;
         client
@@ -134,7 +134,7 @@ impl Bucket {
     }
 }
 
-/// Client S3 construit paresseusement (adapté de `s3/mod.rs` d'Encore).
+/// Lazily built S3 client (adapted from Encore's `s3/mod.rs`).
 struct LazyS3Client {
     cfg: pb::bucket_cluster::S3,
     secret_access_key: Option<Secret>,
@@ -154,8 +154,8 @@ impl LazyS3Client {
         self.cell
             .get_or_init(|| async {
                 let region = aws_config::Region::new(self.cfg.region.clone());
-                // Client HTTP en rustls-ring (pas aws-lc-rs) : TLS pur Rust,
-                // wheels portables (cross-compilation aarch64 incluse).
+                // HTTP client in rustls-ring (not aws-lc-rs): pure Rust TLS,
+                // portable wheels (aarch64 cross-compilation included).
                 let http_client = aws_smithy_http_client::Builder::new()
                     .tls_provider(aws_smithy_http_client::tls::Provider::Rustls(
                         aws_smithy_http_client::tls::rustls_provider::CryptoMode::Ring,
@@ -189,7 +189,7 @@ impl LazyS3Client {
                 }
 
                 let aws_cfg = builder.load().await;
-                // force_path_style : indispensable pour MinIO et les endpoints custom.
+                // force_path_style: essential for MinIO and custom endpoints.
                 let s3_conf = s3::config::Builder::from(&aws_cfg)
                     .force_path_style(true)
                     .build();

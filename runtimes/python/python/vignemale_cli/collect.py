@@ -1,12 +1,12 @@
-"""Extracteur STATIQUE du graphe `meta` — via griffe, **sans exécuter l'app**.
+"""STATIC extractor of the `meta` graph — via griffe, **without running the app**.
 
-Parse le source (décorateurs `@api`, `Service(...)`, annotations, modèles Pydantic)
-et construit le **vrai `meta.proto`** (`Data` : services · rpcs · decls), émis en
-protojson — le graphe canonique, diffable dans une PR.
+Parses the source (`@api` decorators, `Service(...)`, annotations, Pydantic models)
+and builds the **real `meta.proto`** (`Data`: services · rpcs · decls), emitted as
+protojson — the canonical graph, diffable in a PR.
 
-    python -m vignemale_cli.collect ../../examples/typed.py       # un fichier
-    python -m vignemale_cli.collect ../../examples/shop           # un dossier (multi-service)
-    python -m vignemale_cli.collect ... --raw                     # dict intermédiaire
+    python -m vignemale_cli.collect ../../examples/typed.py       # a single file
+    python -m vignemale_cli.collect ../../examples/shop           # a directory (multi-service)
+    python -m vignemale_cli.collect ... --raw                     # intermediate dict
 """
 
 import ast
@@ -21,7 +21,7 @@ from vignemale_cli.parser.meta.v1 import meta_pb2 as meta
 from vignemale_cli.parser.schema.v1 import schema_pb2 as schema
 
 
-# ----- 1) extraction statique (griffe) -----
+# ----- 1) static extraction (griffe) -----
 
 def _lit(expr):
     if expr is None:
@@ -37,9 +37,9 @@ def _is_pydantic(cls) -> bool:
 
 
 def _extract_module(mod) -> tuple:
-    """Renvoie (service, endpoints, models, databases, auth_handler,
-    model_modules, buckets, secrets) — récursif : un package agrège ses
-    sous-modules."""
+    """Returns (service, endpoints, models, databases, auth_handler,
+    model_modules, buckets, secrets) — recursive: a package aggregates its
+    submodules."""
     service = None
     models = {}
     model_modules = {}
@@ -52,7 +52,7 @@ def _extract_module(mod) -> tuple:
     for name, m in mod.members.items():
         kind = m.kind.value
 
-        if kind == "module":  # sous-module d'un dossier-service
+        if kind == "module":  # submodule of a service directory
             svc2, eps2, mods2, dbs2, auth2, modmods2, bk2, sec2 = _extract_module(m)
             service = service or svc2
             endpoints.extend(eps2)
@@ -74,11 +74,11 @@ def _extract_module(mod) -> tuple:
                         "default": _lit(attr.value),
                     }
             models[name] = fields
-            model_modules[name] = mod.path  # module d'origine (pour vignemale gen)
+            model_modules[name] = mod.path  # origin module (for vignemale gen)
 
         elif kind == "class":
-            # table vignemale.datamodel (classe avec `__database__ = "…"`) :
-            # la base déclarée pilote le provisioning, comme SQLDatabase(...)
+            # vignemale.datamodel table (class with `__database__ = "…"`):
+            # the declared database drives provisioning, like SQLDatabase(...)
             dbattr = m.members.get("__database__")
             if dbattr is not None and dbattr.kind.value == "attribute":
                 dbname = _lit(dbattr.value)
@@ -107,7 +107,7 @@ def _extract_module(mod) -> tuple:
             for deco in m.decorators:
                 call = deco.value
                 if type(call).__name__ != "ExprCall":
-                    # décorateur sans parenthèses : @auth_handler
+                    # decorator without parentheses: @auth_handler
                     dname = str(call)
                     if dname == "auth_handler" or dname.endswith(".auth_handler"):
                         auth_fn = name
@@ -146,7 +146,7 @@ def _extract_module(mod) -> tuple:
 
 
 def extract_path(path: str) -> tuple[dict, str]:
-    """Extrait un fichier OU un dossier (un service par module .py)."""
+    """Extracts a file OR a directory (one service per .py module)."""
     path = os.path.abspath(path)
     services = []
     models = {}
@@ -164,10 +164,10 @@ def extract_path(path: str) -> tuple[dict, str]:
             elif (
                 os.path.isdir(full)
                 and not f.startswith(("_", "."))
-                and f != "vignemale_clients"  # clients générés ≠ service
+                and f != "vignemale_clients"  # generated clients ≠ service
                 and os.path.isfile(os.path.join(full, "__init__.py"))
             ):
-                modnames.append(f)  # dossier-service (package)
+                modnames.append(f)  # service directory (package)
     else:
         app_name = os.path.splitext(os.path.basename(path))[0]
         modnames = [app_name]
@@ -201,7 +201,7 @@ def extract_path(path: str) -> tuple[dict, str]:
     }, app_name
 
 
-# ----- 2) dict -> vrai meta.proto (Data) -----
+# ----- 2) dict -> real meta.proto (Data) -----
 
 _BUILTIN = {
     "str": schema.STRING,
@@ -276,16 +276,16 @@ def build_meta(extracted: dict, app_name: str) -> "meta.Data":
         svc.name = svc_info["name"]
         svc.rel_path = "."
         svc.databases.extend(svc_info.get("databases", []))
-        # appartenance bucket → service (utilisée pour relier le bucket à son
-        # service dans l'aperçu d'infra).
+        # bucket → service ownership (used to link the bucket to its
+        # service in the infra overview).
         for b in svc_info.get("buckets", []):
             svc.buckets.add().bucket = b
         for ep in svc_info["endpoints"]:
             rpc = svc.rpcs.add()
             rpc.name = ep["name"]
             rpc.service_name = svc_info["name"]
-            # PRIVATE prime : un endpoint non exposé n'est jamais public, même
-            # avec auth (il n'est joignable qu'en service-à-service).
+            # PRIVATE wins: a non-exposed endpoint is never public, even
+            # with auth (it is only reachable service-to-service).
             if not ep.get("expose", True):
                 rpc.access_type = meta.RPC.PRIVATE
             elif ep.get("auth"):
@@ -308,7 +308,7 @@ def build_meta(extracted: dict, app_name: str) -> "meta.Data":
 if __name__ == "__main__":
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     if len(args) != 1:
-        print("usage: python -m vignemale_cli.collect <fichier.py|dossier> [--raw]", file=sys.stderr)
+        print("usage: python -m vignemale_cli.collect <file.py|directory> [--raw]", file=sys.stderr)
         raise SystemExit(2)
 
     extracted, app_name = extract_path(args[0])

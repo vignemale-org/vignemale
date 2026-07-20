@@ -1,8 +1,8 @@
-"""Comptes utilisateurs : inscription, profil, et L'auth handler de l'app.
+"""User accounts: signup, profile, and the app's auth handler.
 
-Zéro SQL : la table est déclarée en Pydantic (`vignemale.model.Table`), créée
-automatiquement, et les champs personnels sont tagués `PII` → `vignemale rgpd
-map/export/forget` savent quoi cartographier, exporter, effacer.
+Zero SQL: the table is declared in Pydantic (`vignemale.model.Table`), created
+automatically, and the personal fields are tagged `PII` → `vignemale gdpr
+map/export/forget` know what to map, export, erase.
 """
 
 import secrets
@@ -16,12 +16,12 @@ from vignemale.datamodel import PII, Table
 
 class User(Table):
     __database__ = "users"
-    __subject__ = "id"  # cette table EST la personne
+    __subject__ = "id"  # this table IS the person
 
     id: Optional[int] = None
-    email: str = PII(purpose="compte et contact")
-    name: str = PII(purpose="personnalisation")
-    token: str = PII(purpose="authentification")
+    email: str = PII(purpose="account and contact")
+    name: str = PII(purpose="personalization")
+    token: str = PII(purpose="authentication")
     plan: str = "free"
 
 
@@ -32,7 +32,7 @@ class Signup(BaseModel):
 
 @auth_handler
 def check_token(token):
-    """Le token (Bearer ou ?token=) est résolu en base → données d'auth."""
+    """The token (Bearer or ?token=) is resolved in the database → auth data."""
     user = User.find_one(token=token)
     if user is None:
         return None  # → 401
@@ -42,13 +42,13 @@ def check_token(token):
 @api(method="POST", path="/signup")
 def signup(body: Signup) -> dict:
     if "@" not in body.email:
-        raise APIError.invalid_argument(f"email invalide : {body.email!r}")
+        raise APIError.invalid_argument(f"invalid email: {body.email!r}")
     if User.find_one(email=body.email):
-        raise APIError.already_exists(f"un compte existe déjà pour {body.email}")
+        raise APIError.already_exists(f"an account already exists for {body.email}")
     user = User.create(
         email=body.email, name=body.name, token="vgm-" + secrets.token_hex(16)
     )
-    log.info("compte créé", user_id=user.id, email=user.email)
+    log.info("account created", user_id=user.id, email=user.email)
     return {"user_id": user.id, "name": user.name, "plan": user.plan, "token": user.token}
 
 
@@ -59,8 +59,8 @@ def me(auth) -> dict:
 
 @api(method="GET", path="/users/:id", auth=True)
 def get_user(id) -> dict:
-    """Profil d'un utilisateur — consommé par le service `chat` via client."""
+    """A user's profile — consumed by the `chat` service via a client."""
     user = User.get(int(id))
     if user is None:
-        raise APIError.not_found(f"utilisateur {id} inconnu")
+        raise APIError.not_found(f"unknown user {id}")
     return {"id": user.id, "name": user.name, "plan": user.plan}

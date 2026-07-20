@@ -1,17 +1,17 @@
-"""Exemple : API protégée par un auth handler (façon Encore).
+"""Example: API protected by an auth handler (Encore-style).
 
-UN `@auth_handler` par app : il reçoit le token (header `Authorization:
-Bearer …`, ou `?token=` pour les clients sans en-têtes type EventSource) et
-renvoie les données d'auth — ou `None` (→ 401). L'authentification est jouée
-par le CORE Rust avant le handler : un stream protégé renvoie un vrai 401
-avant d'ouvrir le flux.
+ONE `@auth_handler` per app: it receives the token (header `Authorization:
+Bearer …`, or `?token=` for header-less clients like EventSource) and
+returns the auth data — or `None` (→ 401). Authentication is enforced
+by the Rust CORE before the handler: a protected stream returns a real 401
+before opening the flow.
 
-    VIGNEMALE_API_TOKEN=mon-secret vignemale run examples/secure.py
+    VIGNEMALE_API_TOKEN=my-secret vignemale run examples/secure.py
 
     curl 127.0.0.1:8080/public
     curl 127.0.0.1:8080/me                                    # → 401
-    curl -H "Authorization: Bearer mon-secret" 127.0.0.1:8080/me
-    curl -N "127.0.0.1:8080/chat?token=mon-secret" -X POST -d '{"prompt":"salut"}'
+    curl -H "Authorization: Bearer my-secret" 127.0.0.1:8080/me
+    curl -N "127.0.0.1:8080/chat?token=my-secret" -X POST -d '{"prompt":"hi"}'
 """
 
 import os
@@ -40,8 +40,8 @@ def me(auth):
 
 @api(method="POST", path="/chat", auth=True, stream=True)
 def chat(stream, auth, body=None):
-    prompt = (body or {}).get("prompt", "salut")
-    for mot in f"Bonjour {auth['user_id']}, tu as dit : {prompt}".split(" "):
+    prompt = (body or {}).get("prompt", "hi")
+    for mot in f"Hello {auth['user_id']}, you said: {prompt}".split(" "):
         stream.write(mot + " ")
         time.sleep(0.05)
 

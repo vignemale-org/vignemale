@@ -1,154 +1,157 @@
-# Phase 4 — Provisioning & deploy Scaleway (note de conception)
+# Phase 4 — Scaleway provisioning & deploy (design note)
 
-> But : `vignemale deploy` → l'app tourne en prod sur le cloud EU, sans ops.
-> C'est la partie 100 % différenciante (zéro code Encore à copier — leur
-> control-plane est propriétaire).
+> Goal: `vignemale deploy` → the app runs in prod on the EU cloud, with no ops.
+> This is the 100% differentiating part (zero Encore code to copy — their
+> control-plane is proprietary).
 
-## 1. L'atout : presque tout est déjà prêt
+## 1. The asset: almost everything is already in place
 
-L'architecture a été pensée pour ce moment. La Phase 4 ne réinvente rien, elle
-**branche** ce qui existe :
+The architecture was designed with this moment in mind. Phase 4 reinvents
+nothing, it **wires up** what already exists:
 
-- **Le meta** (`collect`) est déjà l'inventaire des ressources : services +
-  endpoints, `SQLDatabase`, `Bucket`, `Secret`, `auth_handler`. Le deploy lit
-  ce graphe et sait quoi créer.
-- **Le provider switch** : tout le runtime se configure par env vars
+- **The meta** (`collect`) is already the inventory of resources: services +
+  endpoints, `SQLDatabase`, `Bucket`, `Secret`, `auth_handler`. The deploy reads
+  this graph and knows what to create.
+- **The provider switch**: the entire runtime is configured via env vars
   (`VIGNEMALE_SQLDB_*`, `VIGNEMALE_S3_*`, `VIGNEMALE_SECRET_*`,
-  `VIGNEMALE_SERVICE_*`, `VIGNEMALE_SERVICE_SECRET`). **Le deploy n'a qu'à poser
-  ces variables** — aucune logique cloud dans le runtime.
-- **Prod-ready** : healthz (`/__vignemale/healthz`), drain + `keep_accepting`
-  (la fenêtre LB existe déjà), multi-process (`VIGNEMALE_WORKERS`), logs JSON.
-  Les Serverless Containers consomment tout ça tel quel.
-- **Migrations** : `db.migrate()` existe, appliquées au démarrage.
+  `VIGNEMALE_SERVICE_*`, `VIGNEMALE_SERVICE_SECRET`). **The deploy just has to set
+  these variables** — no cloud logic in the runtime.
+- **Prod-ready**: healthz (`/__vignemale/healthz`), drain + `keep_accepting`
+  (the LB window already exists), multi-process (`VIGNEMALE_WORKERS`), JSON logs.
+  Serverless Containers consume all of this as-is.
+- **Migrations**: `db.migrate()` exists, applied at startup.
 
-## 2. Les briques Scaleway (vérifiées)
+## 2. The Scaleway building blocks (verified)
 
-| Ressource Vignemale | Service Scaleway | Notes |
+| Vignemale resource | Scaleway service | Notes |
 |---|---|---|
-| `SQLDatabase` | Managed Database PostgreSQL | pgvector dispo ✓ ; 1 instance, N bases logiques (API ou SQL) |
-| `Bucket` | Object Storage | S3-compatible → notre `Bucket` marche déjà via `VIGNEMALE_S3_*` |
-| `Secret` | Secret Manager **ou** env secrètes du container | le plus simple : env secrètes du Serverless Container |
-| chaque `Service` | Serverless Container | image depuis le Container Registry Scaleway |
-| accès | IAM | clé API (application) pour le control-plane + creds runtime |
+| `SQLDatabase` | Managed Database PostgreSQL | pgvector available ✓ ; 1 instance, N logical databases (API or SQL) |
+| `Bucket` | Object Storage | S3-compatible → our `Bucket` already works via `VIGNEMALE_S3_*` |
+| `Secret` | Secret Manager **or** the container's secret env | simplest: the Serverless Container's secret env |
+| each `Service` | Serverless Container | image from the Scaleway Container Registry |
+| access | IAM | API key (application) for the control-plane + runtime creds |
 
-Accès programmatique : **SDK Python officiel `scaleway`** (cohérent avec notre
-outillage Python), ou API HTTP, ou Terraform. Cf. §6.
+Programmatic access: **official Python SDK `scaleway`** (consistent with our
+Python tooling), or HTTP API, or Terraform. See §6.
 
-## 3. Les trois commandes (dans `vignemale-cli`, pas le runtime)
+## 3. The three commands (in `vignemale-cli`, not the runtime)
 
 ```
-vignemale build    → Dockerfile généré, image construite, poussée au registry
-vignemale provision→ crée les ressources Scaleway depuis le meta (DB, buckets, secrets, IAM)
-vignemale deploy   → push image + Serverless Container par service + env vars + migrations
+vignemale build    → Dockerfile generated, image built, pushed to the registry
+vignemale provision→ creates the Scaleway resources from the meta (DB, buckets, secrets, IAM)
+vignemale deploy   → push image + Serverless Container per service + env vars + migrations
 ```
 
-`deploy` orchestre `build` + `provision` + la mise à jour des containers.
+`deploy` orchestrates `build` + `provision` + the container update.
 
-### Le Dockerfile (généré)
+### The Dockerfile (generated)
 
-Multi-stage : (1) builder Rust + maturin → le wheel `vignemale` ; (2) `python-slim`
-+ wheel + `vignemale-cli` + le code de l'app. Entrypoint :
-`vignemale run /app` (ou `gateway` en multi-container). Healthz déjà exposé →
-Scaleway sonde `/__vignemale/healthz`.
+Multi-stage: (1) Rust builder + maturin → the `vignemale` wheel; (2) `python-slim`
++ wheel + `vignemale-cli` + the app's code. Entrypoint:
+`vignemale run /app` (or `gateway` in multi-container). Healthz already exposed →
+Scaleway probes `/__vignemale/healthz`.
 
-## 4. La décision structurante : mono-container vs multi-container
+## 4. The structuring decision: mono-container vs multi-container
 
-| | Mono-container (défaut proposé) | Multi-container |
+| | Mono-container (proposed default) | Multi-container |
 |---|---|---|
-| Forme | tous les services dans 1 container (`vignemale run`) | 1 container/service + 1 gateway |
-| Appels inter-services | fonction directe (in-process) | HTTP signé svcauth (déjà construit) |
-| Coût | 1 container facturé | N+1 containers |
-| Scale | horizontal (instances) | par service, indépendant |
-| Pour qui | la cible : déployer **un agent** simplement | grosses apps multi-équipes |
+| Form | all services in 1 container (`vignemale run`) | 1 container/service + 1 gateway |
+| Inter-service calls | direct function (in-process) | signed svcauth HTTP (already built) |
+| Cost | 1 container billed | N+1 containers |
+| Scale | horizontal (instances) | per service, independent |
+| For whom | the target: deploy **one agent** simply | large multi-team apps |
 
-**Reco : mono-container par défaut, multi-container en opt-in.** La cible
-(déployer un agent IA en 1 commande) veut la simplicité et le coût mini. On a
-déjà la gateway + svcauth pour le jour où le multi-container est demandé — mais
-ce n'est pas le défaut. Le provider switch fait que c'est le **même artefact**,
-juste un découpage de déploiement différent.
+**Recommendation: mono-container by default, multi-container opt-in.** The target
+(deploy an AI agent in 1 command) wants simplicity and minimal cost. We already
+have the gateway + svcauth for the day multi-container is requested — but it's not
+the default. The provider switch means it's the **same artifact**, just a
+different deployment split.
 
-## 5. État & idempotence
+## 5. State & idempotence
 
-`deploy` doit être rejouable sans tout recréer. Deux options :
-- **Tags + lookup** (robuste) : tagger chaque ressource Scaleway avec
-  `vignemale-app=<nom>` + `vignemale-resource=<id>`, et la retrouver avant de
-  créer. Pas de fichier d'état à dériver.
-- **Fichier d'état** (`.vignemale/deploy.json`) : plus simple, mais peut
-  diverger du réel.
+`deploy` must be replayable without recreating everything. Two options:
+- **Tags + lookup** (robust): tag each Scaleway resource with
+  `vignemale-app=<name>` + `vignemale-resource=<id>`, and find it again before
+  creating. No state file to derive.
+- **State file** (`.vignemale/deploy.json`): simpler, but can diverge from
+  reality.
 
-Reco : tags + lookup (l'état vit dans Scaleway, source de vérité unique).
+Recommendation: tags + lookup (state lives in Scaleway, the single source of
+truth).
 
-## 6. Décisions à trancher
+## 6. Decisions to settle
 
-1. **Compte Scaleway** : le provisioning réel exige une clé API IAM. Sans
-   compte, on développe le driver + un **`--dry-run`** (affiche le plan, façon
-   `terraform plan`, testable sans cloud) et on valide ensuite sur un vrai
-   compte. Le dry-run a aussi une valeur produit.
-2. **SDK vs Terraform** : SDK Python `scaleway` (tout en Python, cohérent) vs
-   Terraform (déclaratif, état géré, mais dépendance + langage HCL).
-   Reco : SDK Python, avec une **interface driver** (`provision_db`,
-   `provision_bucket`, `build_push`, `deploy_service`, `set_secrets`) pour
-   préparer le multi-cloud (OVH) plus tard.
-3. **Mono vs multi-container par défaut** : cf. §4 (reco mono).
-4. **Migrations au deploy** : un step `deploy` qui applique `migrate()` une
-   fois (la CLI se connecte à la DB managée) avant de router le trafic — évite
-   la course entre N instances.
+1. **Scaleway account**: real provisioning requires an IAM API key. Without an
+   account, we develop the driver + a **`--dry-run`** (shows the plan, like
+   `terraform plan`, testable without cloud) and then validate on a real account.
+   The dry-run also has product value.
+2. **SDK vs Terraform**: Python SDK `scaleway` (all in Python, consistent) vs
+   Terraform (declarative, managed state, but a dependency + HCL language).
+   Recommendation: Python SDK, with a **driver interface** (`provision_db`,
+   `provision_bucket`, `build_push`, `deploy_service`, `set_secrets`) to prepare
+   for multi-cloud (OVH) later.
+3. **Mono vs multi-container by default**: see §4 (recommendation: mono).
+4. **Migrations at deploy**: a `deploy` step that applies `migrate()` once (the
+   CLI connects to the managed DB) before routing traffic — avoids the race
+   between N instances.
 
-## 7. Découpage en tranches livrables
+## 7. Breakdown into deliverable slices
 
-1. **`vignemale build`** — Dockerfile + build local + (push registry). La
-   partie build est testable sans compte (vérifier que l'image démarre et
-   répond au healthz).
-2. **Driver Scaleway + `provision --dry-run`** — planifie les ressources depuis
-   le meta, affiche le plan. Testable sans compte.
-3. **`provision` réel** — crée DB/buckets/secrets/IAM via le SDK. Compte requis.
+1. **`vignemale build`** — Dockerfile + local build + (registry push). The build
+   part is testable without an account (verify that the image starts and responds
+   to healthz).
+2. **Scaleway driver + `provision --dry-run`** — plans the resources from the
+   meta, shows the plan. Testable without an account.
+3. **Real `provision`** — creates DB/buckets/secrets/IAM via the SDK. Account
+   required.
 4. **`deploy`** — push image + Serverless Container(s) + env vars + migrations.
-   Compte requis.
-5. **Idempotence (tags+lookup) + rollback basique + `vignemale logs/status`.**
+   Account required.
+5. **Idempotence (tags+lookup) + basic rollback + `vignemale logs/status`.**
 
-Ordre : 1 et 2 d'abord (sans compte, dérisquent l'archi), puis 3-4 dès qu'un
-compte Scaleway est dispo.
+Order: 1 and 2 first (no account, they de-risk the architecture), then 3-4 as
+soon as a Scaleway account is available.
 
-## 8. Outillage Scaleway — ne PAS réinventer la roue (analysé le 15 juin 2026)
+## 8. Scaleway tooling — do NOT reinvent the wheel (analyzed on June 15, 2026)
 
-Analyse du GitHub Scaleway (github.com/scaleway). Décision : l'`apply` est de la
-**colle fine au-dessus du SDK Python officiel `scaleway`** (PyPI `scaleway`,
-v2.11, Apache-2.0, ~beta-stable). Il couvre TOUS nos produits, et notre moteur
-est déjà en Python (réutilisable tel quel par un control plane Python).
+Analysis of Scaleway's GitHub (github.com/scaleway). Decision: `apply` is **thin
+glue on top of the official Python SDK `scaleway`** (PyPI `scaleway`, v2.11,
+Apache-2.0, ~beta-stable). It covers ALL our products, and our engine is already
+in Python (reusable as-is by a Python control plane).
 
-| Ressource Vignemale | Module SDK | Méthodes clés (apply + idempotence + progress) |
+| Vignemale resource | SDK module | Key methods (apply + idempotence + progress) |
 |---|---|---|
-| instance Managed DB | `rdb.v1` `RdbV1API` | `create_instance` / `wait_for_instance` / `list_instances` (lookup tags) / `get_instance_certificate` / `get_instance_metrics` (observ.) |
-| base logique | `rdb.v1` | `create_database` / `list_databases` / `create_user` / `list_privileges` |
-| bucket | **aucun module** → S3 | Object Storage = S3 pur : on **réutilise notre code Rust `aws-sdk-s3`** (`bucket_op`), pas de SDK Scaleway |
+| Managed DB instance | `rdb.v1` `RdbV1API` | `create_instance` / `wait_for_instance` / `list_instances` (tag lookup) / `get_instance_certificate` / `get_instance_metrics` (observ.) |
+| logical database | `rdb.v1` | `create_database` / `list_databases` / `create_user` / `list_privileges` |
+| bucket | **no module** → S3 | Object Storage = pure S3: we **reuse our Rust code `aws-sdk-s3`** (`bucket_op`), no Scaleway SDK |
 | secret | `secret.v1beta1` `SecretV1Beta1API` | `create_secret` / `create_secret_version` / `access_secret_version` / `list_secrets` |
 | Serverless Container | `container.v1beta1` `ContainerV1Beta1API` | `create_namespace` / `create_container` / `update_container` / `deploy_container` / `wait_for_container` / `list_containers` (lookup) / `create_domain` |
-| Container Registry | `registry.v1` | namespace pour pousser l'image d'app |
-| IAM / creds | `iam.v1alpha1` | clés d'accès déléguées du client |
-| observabilité | `cockpit` | logs/métriques agrégés (argument de vente) |
+| Container Registry | `registry.v1` | namespace to push the app image |
+| IAM / creds | `iam.v1alpha1` | delegated access keys from the customer |
+| observability | `cockpit` | aggregated logs/metrics (selling point) |
 
-**SDK vs Terraform** : on garde le SDK (pas Terraform/Crossplane). Le SDK mappe
-1-pour-1 sur nos `Action`s, donne `wait_for_*` (→ stream de progression pour le
-log de deploy) et `list_*` (→ idempotence par tags, notre design). Terraform
-rajouterait génération HCL + binaire + backend d'état à gérer = réinventer le
-travail du control plane dans un autre outil.
+**SDK vs Terraform**: we keep the SDK (not Terraform/Crossplane). The SDK maps
+1-to-1 onto our `Action`s, gives `wait_for_*` (→ progress stream for the deploy
+log) and `list_*` (→ idempotence by tags, our design). Terraform would add HCL
+generation + a binary + a state backend to manage = reinventing the control
+plane's work in another tool.
 
-**Pattern d'orchestration** (repris de leur `serverless-api-framework-python`,
-qui vise les Functions mais montre la bonne séquence) : *get-or-create namespace
-→ create/update idempotent (lookup) → deploy → wait → nettoyage du périmé*.
+**Orchestration pattern** (taken from their `serverless-api-framework-python`,
+which targets Functions but shows the right sequence): *get-or-create namespace →
+idempotent create/update (lookup) → deploy → wait → cleanup of the stale*.
 
-**Conséquence** : `ScalewayProvider.existing()` = `list_*` filtré par tags ;
-`apply()` = les `create_*`/`deploy_*` ci-dessus ; le control plane peut être en
-**Python** pour réutiliser `vignemale-deploy` + `scaleway` directement.
+**Consequence**: `ScalewayProvider.existing()` = `list_*` filtered by tags;
+`apply()` = the `create_*`/`deploy_*` above; the control plane can be in
+**Python** to reuse `vignemale-deploy` + `scaleway` directly.
 
-### Repos Scaleway utiles
-- SDK Python `scaleway` (notre dépendance d'apply) : github.com/scaleway/scaleway-sdk-python
-- `scw` CLI (Go, fallback shell pour `--local`) : github.com/scaleway/scaleway-cli
-- `serverless-api-framework-python` (référence de flux deploy) : github.com/scaleway/serverless-api-framework-python
-- provider Terraform (écarté, mais réf. de mapping) : github.com/scaleway/terraform-provider-scaleway
+### Useful Scaleway repos
+- Python SDK `scaleway` (our apply dependency): github.com/scaleway/scaleway-sdk-python
+- `scw` CLI (Go, shell fallback for `--local`): github.com/scaleway/scaleway-cli
+- `serverless-api-framework-python` (deploy flow reference): github.com/scaleway/serverless-api-framework-python
+- Terraform provider (ruled out, but a mapping ref.): github.com/scaleway/terraform-provider-scaleway
 
 ## Sources
-- Serverless Containers : https://www.scaleway.com/en/developers/api/serverless-containers
-- Deploy container (API) : https://www.scaleway.com/en/docs/serverless-containers/api-cli/deploy-container-api/
-- Managed Database PostgreSQL : https://www.scaleway.com/en/developers/api/managed-database-postgre-mysql
-- SDK Python : https://github.com/scaleway/scaleway-sdk-python
+- Serverless Containers: https://www.scaleway.com/en/developers/api/serverless-containers
+- Deploy container (API): https://www.scaleway.com/en/docs/serverless-containers/api-cli/deploy-container-api/
+- Managed Database PostgreSQL: https://www.scaleway.com/en/developers/api/managed-database-postgre-mysql
+- Python SDK: https://github.com/scaleway/scaleway-sdk-python
+</content>

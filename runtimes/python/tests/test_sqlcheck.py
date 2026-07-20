@@ -1,5 +1,5 @@
-"""`vignemale check --sql` : validation des requêtes sql() par PREPARE —
-le mécanisme de sqlx::query!, déplacé au moment check (donc en CI)."""
+"""`vignemale check --sql`: validation of sql() queries via PREPARE —
+the sqlx::query! mechanism, moved to check time (so in CI)."""
 
 import os
 import subprocess
@@ -12,17 +12,17 @@ from conftest import EXAMPLES, HERE
 
 PG = os.environ.get("VIGNEMALE_TEST_PG")
 needs_pg = pytest.mark.skipif(
-    not PG, reason="pose VIGNEMALE_TEST_PG (DSN Postgres) pour l'activer"
+    not PG, reason="set VIGNEMALE_TEST_PG (Postgres DSN) to enable"
 )
 
 
 @needs_pg
-def test_prepare_valide_types_et_detecte_les_erreurs(monkeypatch):
+def test_prepare_validates_types_and_detects_errors(monkeypatch):
     monkeypatch.setenv("VIGNEMALE_SQLDB_PYTEST_MODEL", PG)
-    monkeypatch.setenv("VIGNEMALE_SQLDB", PG)  # pour les tables des autres tests
+    monkeypatch.setenv("VIGNEMALE_SQLDB", PG)  # for the tables of the other tests
     from vignemale.datamodel import Table, check_sql_queries, sql
 
-    class Inspecte(Table):
+    class Inspect(Table):
         __database__ = "pytest_model"
         __tablename__ = "vgm_gadgets"
 
@@ -32,28 +32,28 @@ def test_prepare_valide_types_et_detecte_les_erreurs(monkeypatch):
         active: bool = True
         score: Optional[float] = None
 
-        bonne = sql(
+        good = sql(
             "SELECT * FROM vgm_gadgets WHERE name = $n AND score >= $s",
             n=str,
             s=float,
         )
-        cassee = sql("SELECT colonne_inexistante FROM vgm_gadgets")
+        broken = sql("SELECT nonexistent_column FROM vgm_gadgets")
 
     report = {
-        r["query"]: r for r in check_sql_queries() if r["query"].startswith("Inspecte.")
+        r["query"]: r for r in check_sql_queries() if r["query"].startswith("Inspect.")
     }
-    bonne = report["Inspecte.bonne"]
-    assert bonne["ok"] is True
-    assert bonne["params"] == ["text", "float8"]  # types inférés par Postgres
-    assert {c["name"] for c in bonne["columns"]} >= {"id", "name", "score"}
+    good = report["Inspect.good"]
+    assert good["ok"] is True
+    assert good["params"] == ["text", "float8"]  # types inferred by Postgres
+    assert {c["name"] for c in good["columns"]} >= {"id", "name", "score"}
 
-    cassee = report["Inspecte.cassee"]
-    assert cassee["ok"] is False
-    assert "colonne_inexistante" in cassee["error"]
+    broken = report["Inspect.broken"]
+    assert broken["ok"] is False
+    assert "nonexistent_column" in broken["error"]
 
 
 @needs_pg
-def test_cli_check_sql_ok_sur_boutique():
+def test_cli_check_sql_ok_on_boutique():
     env = dict(os.environ, VIGNEMALE_SQLDB=PG)
     r = subprocess.run(
         [sys.executable, "-m", "vignemale_cli", "check", "--sql",
@@ -61,18 +61,18 @@ def test_cli_check_sql_ok_sur_boutique():
         capture_output=True, text=True, timeout=120, env=env,
     )
     assert r.returncode == 0, r.stderr
-    assert "✓ Produit.abordables" in r.stdout
-    assert "float8" in r.stdout  # le type inféré de $max
+    assert "✓ Product.affordable" in r.stdout
+    assert "float8" in r.stdout  # the inferred type of $max
 
 
 @needs_pg
-def test_cli_check_sql_echoue_sur_requete_cassee():
+def test_cli_check_sql_fails_on_broken_query():
     env = dict(os.environ, VIGNEMALE_SQLDB=PG)
     r = subprocess.run(
         [sys.executable, "-m", "vignemale_cli", "check", "--sql",
-         os.path.join(HERE, "app_sql_casse.py")],
+         os.path.join(HERE, "app_sql_broken.py")],
         capture_output=True, text=True, timeout=120, env=env,
     )
     assert r.returncode != 0
-    assert "✗ Casse.boom" in r.stdout
-    assert "invalide" in r.stderr
+    assert "✗ Broken.boom" in r.stdout
+    assert "invalid" in r.stderr

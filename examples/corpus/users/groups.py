@@ -1,4 +1,4 @@
-"""Groupes : création, membres — la brique des permissions du RAG."""
+"""Groups: creation, members — the building block of the RAG permissions."""
 
 from typing import Optional
 
@@ -38,8 +38,8 @@ class NewMember(BaseModel):
 @api(method="POST", path="/groups", auth=True)
 def create_group(body: NewGroup, auth) -> dict:
     group = Group.create(name=body.name, owner_id=auth["user_id"])
-    GroupMember.create(group_id=group.id, user_id=auth["user_id"])  # owner membre
-    log.info("groupe créé", group_id=group.id, name=group.name)
+    GroupMember.create(group_id=group.id, user_id=auth["user_id"])  # owner is a member
+    log.info("group created", group_id=group.id, name=group.name)
     return {"id": group.id, "name": group.name}
 
 
@@ -47,12 +47,12 @@ def create_group(body: NewGroup, auth) -> dict:
 def add_member(id, body: NewMember, auth) -> dict:
     group = Group.get(int(id))
     if group is None:
-        raise APIError.not_found(f"groupe {id} introuvable")
+        raise APIError.not_found(f"group {id} not found")
     if group.owner_id != auth["user_id"]:
-        raise APIError.permission_denied("seul le propriétaire ajoute des membres")
+        raise APIError.permission_denied("only the owner can add members")
     user = User.find_one(email=body.email)
     if user is None:
-        raise APIError.not_found(f"aucun compte pour {body.email}")
+        raise APIError.not_found(f"no account for {body.email}")
     if not GroupMember.find_one(group_id=group.id, user_id=user.id):
         GroupMember.create(group_id=group.id, user_id=user.id)
     return {"group_id": group.id, "user_id": user.id}
@@ -60,7 +60,7 @@ def add_member(id, body: NewMember, auth) -> dict:
 
 @api(method="GET", path="/my/groups", auth=True)
 def my_groups(auth) -> dict:
-    """Les groupes de l'utilisateur — consommé par `kb` (auth propagée)."""
+    """The user's groups — consumed by `kb` (auth propagated)."""
     memberships = GroupMember.find(user_id=auth["user_id"])
     groups = [Group.get(m.group_id) for m in memberships]
     return {"groups": [{"id": g.id, "name": g.name} for g in groups if g]}

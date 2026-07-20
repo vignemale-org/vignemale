@@ -1,26 +1,26 @@
 # Vignemale
 
-**Déploie tes agents IA et tes APIs en production sur Scaleway, directement depuis ton code Python.**
+**Deploy your AI agents and APIs to production on Scaleway, straight from your Python code.**
 
-Vignemale est un framework *Infrastructure-from-Code* : tu **déclares** ton infra
-(base de données, bucket, secrets) dans le code, et Vignemale s'occupe du reste —
-provisioning, câblage, serveur HTTP. Pas de YAML, pas de Terraform.
+Vignemale is an *Infrastructure-from-Code* framework: you **declare** your infra
+(database, bucket, secrets) in the code, and Vignemale handles the rest —
+provisioning, wiring, HTTP server. No YAML, no Terraform.
 
 ```bash
-pip install vignemale          # le runtime + le SDK
-pip install "vignemale[cli]"   # + l'outil en ligne de commande (run/check/gen/build)
+pip install vignemale          # the runtime + the SDK
+pip install "vignemale[cli]"   # + the command-line tool (run/check/gen/build)
 ```
 
-## Exemple
+## Example
 
-Une API todo complète avec Postgres — en un seul fichier, zéro configuration :
+A complete todo API with Postgres — in a single file, zero configuration:
 
 ```python
 from pydantic import BaseModel
 from vignemale import api, log, HTTPError, SQLDatabase
 
-# Le code DÉCLARE la base : au `run`, Vignemale provisionne le Postgres local tout
-# seul ; en prod, le DSN injecté dans l'environnement prend le relais.
+# The code DECLARES the database: on `run`, Vignemale provisions the local Postgres
+# by itself; in prod, the DSN injected into the environment takes over.
 db = SQLDatabase("todo")
 
 db.execute("""
@@ -42,41 +42,42 @@ def create_todo(body: NewTodo) -> Todo:
     row = db.query_row(
         "INSERT INTO todos (title) VALUES ($1) RETURNING id, title, done", body.title,
     )
-    log.info("todo créé", todo_id=row["id"])
+    log.info("todo created", todo_id=row["id"])
     return Todo(**row)
 
 @api(method="GET", path="/todos/{todo_id}")
 def get_todo(todo_id: int) -> Todo:
     row = db.query_row("SELECT id, title, done FROM todos WHERE id = $1", todo_id)
     if row is None:
-        raise HTTPError(404, "todo introuvable")
+        raise HTTPError(404, "todo not found")
     return Todo(**row)
 ```
 
 ```bash
-vignemale run app.py     # docker + base + DSN : automatique
-curl -X POST 127.0.0.1:8080/todos -d '{"title":"acheter du pain"}'
+vignemale run app.py     # docker + database + DSN: automatic
+curl -X POST 127.0.0.1:8080/todos -d '{"title":"buy bread"}'
 ```
 
-Les endpoints `@api` sont typés avec Pydantic : validation des requêtes/réponses,
-erreurs HTTP propres, logs structurés — tout est inclus.
+The `@api` endpoints are typed with Pydantic: request/response validation, clean
+HTTP errors, structured logs — everything is included.
 
-## Ce que le SDK expose
+## What the SDK exposes
 
-| Brique | Rôle |
+| Building block | Role |
 |---|---|
-| `@api` | endpoint HTTP typé (Pydantic) |
-| `SQLDatabase` | Postgres déclaré dans le code (pool + requêtes + transactions) |
-| `Bucket` | stockage objet S3-compatible (Scaleway / MinIO / AWS) |
-| `Secret` | secrets résolus depuis l'environnement |
-| `Service` / `call` | appels service-à-service signés |
-| `log` | logs structurés JSON |
+| `@api` | typed HTTP endpoint (Pydantic) |
+| `SQLDatabase` | Postgres declared in the code (pool + queries + transactions) |
+| `Bucket` | S3-compatible object storage (Scaleway / MinIO / AWS) |
+| `Secret` | secrets resolved from the environment |
+| `Service` / `call` | signed service-to-service calls |
+| `log` | structured JSON logs |
 
-Le cœur est écrit en **Rust** (binding PyO3) : serveur HTTP, pools, TLS — la seule
-dépendance Python en production est `pydantic`.
+The core is written in **Rust** (PyO3 binding): HTTP server, pools, TLS — the only
+Python dependency in production is `pydantic`.
 
-## Licence
+## License
 
-[MPL-2.0](https://github.com/vignemale-org/vignemale/blob/main/LICENSE) — cœur ouvert.
+[MPL-2.0](https://github.com/vignemale-org/vignemale/blob/main/LICENSE) — open core.
 
-[Code source & documentation →](https://github.com/vignemale-org/vignemale)
+[Source code & documentation →](https://github.com/vignemale-org/vignemale)
+</content>

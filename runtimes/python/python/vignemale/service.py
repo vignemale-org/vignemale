@@ -1,6 +1,6 @@
-"""Primitive `Service` : regroupe des endpoints (et, plus tard, des ressources).
+"""`Service` primitive: groups endpoints (and, later, resources).
 
-Façon Encore : un module = un service.
+Encore-style: one module = one service.
 
     from vignemale import Service, api
 
@@ -12,7 +12,7 @@ Façon Encore : un module = un service.
 
 import inspect
 
-# Registre runtime des services déclarés : (nom, module).
+# Runtime registry of declared services: (name, module).
 _services: list[tuple[str, str]] = []
 
 

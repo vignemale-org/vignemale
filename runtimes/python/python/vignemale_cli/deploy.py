@@ -1,11 +1,11 @@
-"""`vignemale deploy` : push-to-deploy vers le control plane.
+"""`vignemale deploy`: push-to-deploy to the control plane.
 
-Lit ~/.vignemale/credentials (posé par `vignemale login`) et pousse le dossier
-courant vers le remote git du control plane, authentifié par le token. Le serveur
-valide le token (better-auth), collecte la meta puis crée le déploiement.
+Reads ~/.vignemale/credentials (set by `vignemale login`) and pushes the current
+directory to the control plane's git remote, authenticated by the token. The server
+validates the token (better-auth), collects the meta then creates the deployment.
 
-Le serveur git peut différer de l'URL du panel : `VIGNEMALE_GIT_URL` est prioritaire,
-sinon on retombe sur `cloud_url` des credentials.
+The git server may differ from the panel URL: `VIGNEMALE_GIT_URL` takes priority,
+otherwise we fall back to the credentials' `cloud_url`.
 """
 
 import os
@@ -24,7 +24,7 @@ def _git_base() -> str | None:
 
 
 def _app_name(path: str) -> str:
-    """[tool.vignemale].app du pyproject, sinon le nom du dossier."""
+    """[tool.vignemale].app from the pyproject, otherwise the directory name."""
     try:
         import tomllib
 
@@ -47,10 +47,10 @@ def _push_url(base: str, token: str, app: str) -> str:
 def deploy(path: str = ".") -> int:
     creds = auth.load_token()
     if not creds:
-        print("Pas connecté. Lance d'abord : vignemale login", file=sys.stderr)
+        print("Not logged in. First run: vignemale login", file=sys.stderr)
         return 1
     if not os.path.isdir(os.path.join(path, ".git")):
-        print("Ce dossier n'est pas un dépôt git (git init + commit requis).", file=sys.stderr)
+        print("This directory is not a git repo (git init + commit required).", file=sys.stderr)
         return 1
 
     base = _git_base()
@@ -59,7 +59,7 @@ def deploy(path: str = ".") -> int:
     url = _push_url(base, token, app)
     host = urllib.parse.urlsplit(base).netloc
 
-    print(f"vignemale: déploiement de « {app} » → {host}…", flush=True)
+    print(f'vignemale: deploying "{app}" → {host}…', flush=True)
     r = subprocess.run(
         ["git", "-C", path, "push", url, "HEAD:main"],
         capture_output=True,
@@ -69,7 +69,7 @@ def deploy(path: str = ".") -> int:
         err = (r.stderr or "").replace(token, "***").strip()
         if err:
             print(err, file=sys.stderr)
-        print("vignemale: échec du push (token invalide ? lance `vignemale login`).", file=sys.stderr)
+        print("vignemale: push failed (invalid token? run `vignemale login`).", file=sys.stderr)
         return 1
-    print(f"vignemale: ✓ poussé. Le déploiement apparaît dans le panel ({creds['cloud_url']}).")
+    print(f"vignemale: ✓ pushed. The deployment appears in the panel ({creds['cloud_url']}).")
     return 0

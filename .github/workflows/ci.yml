@@ -22,22 +22,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Pas de setup-protoc : le build.rs vendore protoc (protoc-bin-vendored).
+      # No setup-protoc: build.rs vendors protoc (protoc-bin-vendored).
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
-      - name: Tests Rust (core)
+      - name: Rust tests (core)
         run: cargo test
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Build binding PyO3 + SDK + CLI (un seul paquet, extras dev)
+      - name: Build PyO3 binding + SDK + CLI (single package, dev extras)
         working-directory: runtimes/python
         run: pip install ".[dev]"
 
-      - name: Tests Python (pytest)
+      - name: Python tests (pytest)
         working-directory: runtimes/python
         env:
           VIGNEMALE_TEST_PG: postgres://postgres:vignemale@127.0.0.1:5432/postgres

@@ -1,24 +1,24 @@
-"""Primitive `SQLDatabase` : Postgres depuis Python, servi par le core Rust.
+"""`SQLDatabase` primitive: Postgres from Python, served by the Rust core.
 
     from vignemale import SQLDatabase
 
     db = SQLDatabase("todo")
-    db.execute("INSERT INTO todos (title) VALUES ($1)", "acheter du pain")
+    db.execute("INSERT INTO todos (title) VALUES ($1)", "buy bread")
     rows = db.query("SELECT id, title, done FROM todos WHERE done = $1", False)
 
-Provider switch (façon Encore) : le code déclare la base, l'ENVIRONNEMENT
-choisit le backend. Le DSN est résolu dans cet ordre :
+Provider switch (Encore-style): the code declares the database, the ENVIRONMENT
+chooses the backend. The DSN is resolved in this order:
 
-  1. `VIGNEMALE_SQLDB_<NOM>`  (ex. VIGNEMALE_SQLDB_TODO)
-  2. `VIGNEMALE_SQLDB`        (défaut commun à toutes les bases)
+  1. `VIGNEMALE_SQLDB_<NAME>`  (e.g. VIGNEMALE_SQLDB_TODO)
+  2. `VIGNEMALE_SQLDB`         (shared default for all databases)
 
-En local : un Postgres Docker. En prod : posé par le provisioning.
+Locally: a Docker Postgres. In prod: set by provisioning.
 
-Deux façons de l'utiliser (comme Encore) :
-- requêtes directes (`query`/`execute`/`transaction`), servies par le core ;
-- **n'importe quel ORM** (SQLAlchemy, SQLModel, Tortoise…) via
-  `db.connection_string` — l'ORM se connecte avec son propre driver. On
-  fournit la base + la connexion + les migrations ; l'ORM fait le reste.
+Two ways to use it (like Encore):
+- direct queries (`query`/`execute`/`transaction`), served by the core;
+- **any ORM** (SQLAlchemy, SQLModel, Tortoise…) via
+  `db.connection_string` — the ORM connects with its own driver. We
+  provide the database + the connection + the migrations; the ORM does the rest.
 """
 
 import glob
@@ -27,19 +27,19 @@ import os
 
 from . import _core
 
-# Bases déclarées avec un dossier de migrations (appliquées par `vignemale run`).
+# Databases declared with a migrations directory (applied by `vignemale run`).
 _databases: list = []
 
 
 class SQLError(Exception):
-    """Erreur SQL (connexion, requête, type non supporté) — message du core."""
+    """SQL error (connection, query, unsupported type) — message from the core."""
 
 
 class SQLDatabase:
     def __init__(self, name: str, migrations: str = None):
-        """`migrations` : dossier de fichiers `.sql` (triés par nom) appliqués
-        une fois chacun au démarrage (`vignemale run`), façon Encore — pour les
-        schémas gérés par un ORM/outil tiers (alembic, etc.)."""
+        """`migrations`: directory of `.sql` files (sorted by name) each applied
+        once at startup (`vignemale run`), Encore-style — for schemas
+        managed by a third-party ORM/tool (alembic, etc.)."""
         self.name = name
         self._migrations = None
         if migrations:
@@ -60,15 +60,15 @@ class SQLDatabase:
         dsn = os.environ.get(env_key) or os.environ.get("VIGNEMALE_SQLDB")
         if not dsn:
             raise SQLError(
-                f"aucun DSN pour la base '{self.name}' : "
-                f"pose {env_key} ou VIGNEMALE_SQLDB "
-                "(ex. postgres://user:pass@127.0.0.1:5432/db)"
+                f"no DSN for database '{self.name}': "
+                f"set {env_key} or VIGNEMALE_SQLDB "
+                "(e.g. postgres://user:pass@127.0.0.1:5432/db)"
             )
         return dsn
 
     @property
     def connection_string(self) -> str:
-        """Le DSN, pour brancher l'ORM de ton choix (SQLAlchemy, SQLModel…).
+        """The DSN, to plug in the ORM of your choice (SQLAlchemy, SQLModel…).
 
             engine = create_engine(db.connection_string.replace(
                 "postgres://", "postgresql+psycopg://", 1))
@@ -76,8 +76,8 @@ class SQLDatabase:
         return self.dsn
 
     def migrate(self) -> int:
-        """Applique les fichiers de migration non encore appliqués (idempotent,
-        suivis dans `_vignemale_migrations`). Renvoie le nombre appliqué."""
+        """Applies the migration files not yet applied (idempotent,
+        tracked in `_vignemale_migrations`). Returns the number applied."""
         if not self._migrations or not os.path.isdir(self._migrations):
             return 0
         self.batch(
@@ -99,8 +99,8 @@ class SQLDatabase:
             with open(path) as f:
                 sql = f.read()
             safe = name.replace("'", "''")
-            # migration + enregistrement dans UN batch atomique : si la
-            # migration échoue, rien n'est marqué appliqué (rollback).
+            # migration + recording in ONE atomic batch: if the
+            # migration fails, nothing is marked as applied (rollback).
             self.batch(
                 "BEGIN;\n" + sql.rstrip().rstrip(";") + ";\n"
                 f"INSERT INTO _vignemale_migrations (name) VALUES ('{safe}');\nCOMMIT;"
@@ -109,14 +109,14 @@ class SQLDatabase:
         return applied
 
     def batch(self, sql: str) -> None:
-        """Exécute un script SQL multi-instructions (sans paramètres)."""
+        """Executes a multi-statement SQL script (without parameters)."""
         try:
             _core.sqldb_batch(self.dsn, sql)
         except RuntimeError as e:
             raise SQLError(str(e)) from None
 
     def query(self, sql: str, *params) -> list:
-        """SELECT → liste de dicts (une entrée par ligne)."""
+        """SELECT → list of dicts (one entry per row)."""
         try:
             return json.loads(
                 _core.sqldb_query(self.dsn, sql, json.dumps(list(params), default=str))
@@ -125,12 +125,12 @@ class SQLDatabase:
             raise SQLError(str(e)) from None
 
     def query_row(self, sql: str, *params):
-        """SELECT → première ligne (dict) ou None."""
+        """SELECT → first row (dict) or None."""
         rows = self.query(sql, *params)
         return rows[0] if rows else None
 
     def execute(self, sql: str, *params) -> int:
-        """INSERT/UPDATE/DELETE/DDL → nombre de lignes affectées."""
+        """INSERT/UPDATE/DELETE/DDL → number of affected rows."""
         try:
             return _core.sqldb_execute(
                 self.dsn, sql, json.dumps(list(params), default=str)
@@ -139,18 +139,18 @@ class SQLDatabase:
             raise SQLError(str(e)) from None
 
     def transaction(self) -> "Transaction":
-        """Transaction (context manager) : COMMIT en sortie normale,
-        ROLLBACK si une exception traverse le bloc.
+        """Transaction (context manager): COMMIT on normal exit,
+        ROLLBACK if an exception crosses the block.
 
             with db.transaction() as tx:
-                tx.execute("UPDATE comptes SET solde = solde - $1 WHERE id = $2", 10, a)
-                tx.execute("UPDATE comptes SET solde = solde + $1 WHERE id = $2", 10, b)
+                tx.execute("UPDATE accounts SET balance = balance - $1 WHERE id = $2", 10, a)
+                tx.execute("UPDATE accounts SET balance = balance + $1 WHERE id = $2", 10, b)
         """
         return Transaction(self.dsn)
 
 
 class Transaction:
-    """Une transaction Postgres — mêmes méthodes que `SQLDatabase`."""
+    """A Postgres transaction — same methods as `SQLDatabase`."""
 
     def __init__(self, dsn: str):
         self._dsn = dsn
@@ -172,7 +172,7 @@ class Transaction:
             else:
                 _core.sqldb_tx_rollback(self._id)
         except RuntimeError as e:
-            if exc_type is None:  # ne pas masquer l'exception d'origine
+            if exc_type is None:  # do not mask the original exception
                 raise SQLError(str(e)) from None
         finally:
             self._id = None

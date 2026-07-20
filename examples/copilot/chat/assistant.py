@@ -1,11 +1,11 @@
-"""L'assistant : reçoit un message, le stocke, streame sa réponse token par
-token, puis archive la réponse — le tout dans une conversation persistée.
+"""The assistant: receives a message, stores it, streams its reply token by
+token, then archives the reply — all within a persisted conversation.
 
-Au passage, il appelle le service `users` comme un client (profil/plan) :
-appel direct en local, HTTP signé une fois déployé.
+Along the way, it calls the `users` service like a client (profile/plan):
+a direct local call, signed HTTP once deployed.
 
-L'« IA » est simulée pour rester sans dépendance — branche ton framework
-d'agent préféré (Pydantic AI, LangChain…) dans `generate_reply`.
+The "AI" is simulated to stay dependency-free — plug in your favorite agent
+framework (Pydantic AI, LangChain…) inside `generate_reply`.
 """
 
 import time
@@ -23,14 +23,14 @@ class UserMessage(BaseModel):
 
 
 def generate_reply(profil: dict, message: str) -> list:
-    """Ton agent IA vit ici. (Simulé : remplace par un vrai modèle.)"""
+    """Your AI agent lives here. (Simulated: replace with a real model.)"""
     reply = (
-        f"Bonjour {profil['name']} ! Tu me dis : « {message} ». "
-        "Voici mon conseil d'assistant de démonstration : déploie-moi sur "
-        "Scaleway avec vignemale, et je répondrai pour de vrai."
+        f"Hello {profil['name']}! You tell me: \"{message}\". "
+        "Here is my demo-assistant advice: deploy me on "
+        "Scaleway with vignemale, and I will answer for real."
     )
     if profil["plan"] == "free":
-        reply += " (Passe au plan pro pour des réponses moins génériques. 😄)"
+        reply += " (Upgrade to the pro plan for less generic answers. 😄)"
     return reply.split(" ")
 
 
@@ -43,7 +43,7 @@ def chat_in_conversation(stream, id, auth, body: UserMessage = None):
         conversation_id=conv.id, user_id=auth["user_id"], role="user", content=message
     )
 
-    # appel inter-services : le profil vient du service `users`
+    # inter-service call: the profile comes from the `users` service
     profil = users.get_user(id=auth["user_id"])
 
     tokens = generate_reply(profil, message)
@@ -58,7 +58,7 @@ def chat_in_conversation(stream, id, auth, body: UserMessage = None):
         content=" ".join(tokens),
     )
     log.info(
-        "réponse générée",
+        "reply generated",
         conversation_id=conv.id,
         user_id=auth["user_id"],
         tokens=len(tokens),

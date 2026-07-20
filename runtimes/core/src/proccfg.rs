@@ -1,6 +1,6 @@
-// Porté de `encore/runtimes/core/src/proccfg.rs`, rebrandé Vignemale.
-// ProcessConfig décrit quels services/gateways CE process héberge, et applique
-// ce filtrage (+ service discovery local) sur la RuntimeConfig.
+// Ported from `encore/runtimes/core/src/proccfg.rs`, rebranded Vignemale.
+// ProcessConfig describes which services/gateways THIS process hosts, and applies
+// that filtering (+ local service discovery) to the RuntimeConfig.
 
 use std::collections::HashMap;
 

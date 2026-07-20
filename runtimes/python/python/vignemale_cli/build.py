@@ -1,20 +1,20 @@
-"""`vignemale build` : construit l'image Docker de l'app.
+"""`vignemale build`: builds the app's Docker image.
 
-Deux chemins :
+Two paths:
 
-  - **rapide (défaut)** : `FROM <image de base>` + copie du code de l'app. L'image
-    de base `vignemale-python` contient le runtime (cœur Rust + SDK) DÉJÀ compilé
-    et publié en CI — le build d'une app prend quelques secondes, pas de Rust.
-  - **--from-source** : compile le wheel Rust+PyO3 dans un étage builder (lent),
-    utile en dev quand le cœur n'est pas encore publié, ou hors ligne.
+  - **fast (default)**: `FROM <base image>` + copy of the app's code. The
+    `vignemale-python` base image contains the runtime (Rust core + SDK) ALREADY
+    compiled and published in CI — building an app takes a few seconds, no Rust.
+  - **--from-source**: compiles the Rust+PyO3 wheel in a builder stage (slow),
+    useful in dev when the core is not yet published, or offline.
 
-Dans les deux cas l'image finale est distroless (python 3.11, sans shell ni pip)
-et n'embarque QUE le runtime (pydantic + le .so) : le runtime part en prod avec
-pydantic pour seule dépendance.
+In both cases the final image is distroless (python 3.11, without shell or pip)
+and embeds ONLY the runtime (pydantic + the .so): the runtime ships to prod with
+pydantic as its only dependency.
 
-Le provider switch fait que la même image vise le local ou la prod : `vignemale
-deploy` posera les `VIGNEMALE_*` (DSN managé, S3 Scaleway, secrets…) ; le point
-d'entrée prod (`python -m vignemale`) ne provisionne rien.
+The provider switch means the same image targets local or prod: `vignemale
+deploy` will set the `VIGNEMALE_*` vars (managed DSN, Scaleway S3, secrets…); the
+prod entry point (`python -m vignemale`) provisions nothing.
 """
 
 import os
@@ -22,18 +22,18 @@ import shutil
 import subprocess
 import tempfile
 
-# Image de base par défaut (runtime pré-compilé, publiée en CI sur GHCR).
-# Surchargeable via --base ou VIGNEMALE_BASE_IMAGE.
+# Default base image (pre-compiled runtime, published in CI on GHCR).
+# Overridable via --base or VIGNEMALE_BASE_IMAGE.
 DEFAULT_BASE_IMAGE = os.environ.get(
     "VIGNEMALE_BASE_IMAGE", "ghcr.io/vignemale-org/vignemale-python:latest"
 )
 
-# Parties de la source vignemale nécessaires pour compiler le wheel (--from-source).
+# Parts of the vignemale source needed to compile the wheel (--from-source).
 _SRC_PARTS = ["Cargo.toml", "Cargo.lock", "runtimes", "proto"]
-# Exclus de la copie du contexte (lourds / inutiles au build).
+# Excluded from the context copy (heavy / useless for the build).
 _IGNORE = shutil.ignore_patterns(
-    # NB : on garde vignemale_clients (clients générés) — ils sont REQUIS au
-    # runtime (les services les importent pour call() inter-services).
+    # NB: we keep vignemale_clients (generated clients) — they are REQUIRED at
+    # runtime (services import them for inter-service call()).
     "target", ".venv", "__pycache__", "*.pyc", ".pytest_cache",
     "*.so", "dist", "*.egg-info", ".git",
 )
@@ -44,24 +44,24 @@ def _sanitize(name: str) -> str:
 
 
 def _repo_root() -> str:
-    """Racine du dépôt vignemale (workspace Cargo + runtimes/) — pour --from-source."""
+    """Root of the vignemale repo (Cargo workspace + runtimes/) — for --from-source."""
     override = os.environ.get("VIGNEMALE_SRC")
     if override:
         return os.path.abspath(override)
-    # __file__ = .../cli/vignemale_cli/build.py → racine = 3 niveaux au-dessus
+    # __file__ = .../cli/vignemale_cli/build.py → root = 3 levels above
     here = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     if os.path.isfile(os.path.join(here, "Cargo.toml")) and os.path.isdir(
         os.path.join(here, "runtimes")
     ):
         return here
     raise SystemExit(
-        "vignemale build --from-source: source vignemale introuvable (workspace "
-        "Cargo + runtimes/). Pose VIGNEMALE_SRC vers la racine du dépôt vignemale."
+        "vignemale build --from-source: vignemale source not found (Cargo "
+        "workspace + runtimes/). Set VIGNEMALE_SRC to the root of the vignemale repo."
     )
 
 
 def _stage_app(app_path: str, ctx: str) -> str:
-    """Copie le code de l'app dans le contexte ; renvoie son chemin DANS l'image."""
+    """Copies the app's code into the context; returns its path INSIDE the image."""
     app_path = os.path.abspath(app_path)
     appdir = os.path.join(ctx, "app")
     if os.path.isdir(app_path):
@@ -71,11 +71,11 @@ def _stage_app(app_path: str, ctx: str) -> str:
         os.makedirs(appdir)
         shutil.copy2(app_path, appdir)
         return "/app/" + os.path.basename(app_path)
-    raise SystemExit(f"vignemale build: app introuvable : {app_path}")
+    raise SystemExit(f"vignemale build: app not found: {app_path}")
 
 
 def _stage_src(ctx: str) -> None:
-    """Copie la source vignemale dans le contexte (pour --from-source)."""
+    """Copies the vignemale source into the context (for --from-source)."""
     root = _repo_root()
     src = os.path.join(ctx, "src")
     os.makedirs(src)
@@ -87,12 +87,12 @@ def _stage_src(ctx: str) -> None:
         elif os.path.isfile(s):
             shutil.copy2(s, d)
         else:
-            raise SystemExit(f"vignemale build: « {part} » manquant dans {root}")
+            raise SystemExit(f'vignemale build: "{part}" missing in {root}')
 
 
 def _dockerfile_fast(container_app: str, base: str) -> str:
     return f"""# syntax=docker/dockerfile:1
-# Généré par `vignemale build` — app au-dessus du runtime pré-compilé.
+# Generated by `vignemale build` — app on top of the pre-compiled runtime.
 FROM {base}
 COPY app/ /app/
 ENTRYPOINT ["python", "-m", "vignemale", "{container_app}"]
@@ -101,9 +101,9 @@ ENTRYPOINT ["python", "-m", "vignemale", "{container_app}"]
 
 def _dockerfile_source(container_app: str) -> str:
     return f"""# syntax=docker/dockerfile:1
-# Généré par `vignemale build --from-source` — compile le runtime puis l'app.
+# Generated by `vignemale build --from-source` — compiles the runtime then the app.
 
-# ---- étage 1 : compile le wheel Rust+PyO3 (abi3, strippé+LTO) via maturin ----
+# ---- stage 1: compile the Rust+PyO3 wheel (abi3, stripped+LTO) via maturin ----
 FROM rust:1-bookworm AS builder
 RUN apt-get update && apt-get install -y --no-install-recommends \\
         protobuf-compiler libprotobuf-dev patchelf python3 python3-dev python3-pip \\
@@ -114,13 +114,13 @@ WORKDIR /build
 COPY src/ /build/
 RUN cd runtimes/python && maturin build --release --out /wheels
 
-# ---- étage 2 : installe le runtime SEUL (pydantic + .so) en dossier plat ----
+# ---- stage 2: install the runtime ALONE (pydantic + .so) in a flat directory ----
 FROM python:3.11-slim-bookworm AS installer
 COPY --from=builder /wheels/*.whl /tmp/
 RUN pip install --no-cache-dir --target=/pylibs /tmp/*.whl \\
     && find /pylibs -type d -name __pycache__ -prune -exec rm -rf {{}} +
 
-# ---- étage 3 : image finale distroless (python 3.11, sans shell ni pip) ----
+# ---- stage 3: final distroless image (python 3.11, without shell or pip) ----
 FROM gcr.io/distroless/python3-debian12
 WORKDIR /app
 COPY --from=installer /pylibs /pylibs
@@ -163,15 +163,15 @@ def build(
 
         if print_only:
             print(dockerfile)
-            print(f"# contexte de build prêt : {ctx}")
-            print(f"# build manuel :  docker build -t {tag} {ctx}")
+            print(f"# build context ready: {ctx}")
+            print(f"# manual build:  docker build -t {tag} {ctx}")
             return tag
 
         if not shutil.which("docker"):
-            raise SystemExit("vignemale build: Docker requis (https://docker.com)")
+            raise SystemExit("vignemale build: Docker required (https://docker.com)")
 
-        # buildx dès qu'on cible une plateforme (ex. linux/amd64 pour Scaleway
-        # depuis un Mac arm64) ou qu'on pousse au registry.
+        # buildx as soon as we target a platform (e.g. linux/amd64 for Scaleway
+        # from an arm64 Mac) or push to the registry.
         if platform or push:
             cmd = ["docker", "buildx", "build"]
             if platform:
@@ -180,27 +180,27 @@ def build(
         else:
             cmd = ["docker", "build", "-t", tag, ctx]
 
-        target = "pousse" if push else "build"
+        target = "pushing" if push else "building"
         where = f" ({platform})" if platform else ""
-        src = "compilation Rust release, patiente" if from_source else f"au-dessus de {base}"
-        print(f"vignemale: {target} de l'image « {tag} »{where} ({src})…", flush=True)
+        src = "Rust release compilation, hang on" if from_source else f"on top of {base}"
+        print(f'vignemale: {target} image "{tag}"{where} ({src})…', flush=True)
         r = subprocess.run(cmd)
         if r.returncode != 0:
             hint = ""
             if not from_source:
                 hint = (
-                    f"\n  (l'image de base {base} est-elle accessible ? "
-                    "`docker login ghcr.io`, ou `--from-source`)"
+                    f"\n  (is the base image {base} reachable? "
+                    "`docker login ghcr.io`, or `--from-source`)"
                 )
-            raise SystemExit(f"vignemale build: échec du build{hint}")
+            raise SystemExit(f"vignemale build: build failed{hint}")
         if push:
-            print(f"vignemale: image « {tag} » poussée. Déploie :\n"
+            print(f'vignemale: image "{tag}" pushed. Deploy:\n'
                   f"  vignemale deploy <app> --image {tag}", flush=True)
         else:
             print(
-                f"vignemale: image « {tag} » prête.\n"
-                f"  lancer :   docker run --rm -p 8080:8080 {tag}\n"
-                f"  healthz :  curl localhost:8080/__vignemale/healthz",
+                f'vignemale: image "{tag}" ready.\n'
+                f"  run:      docker run --rm -p 8080:8080 {tag}\n"
+                f"  healthz:  curl localhost:8080/__vignemale/healthz",
                 flush=True,
             )
         return tag

@@ -1,10 +1,9 @@
-"""Knowledge bases : création, partage à des groupes, et la règle d'accès.
+"""Knowledge bases: creation, sharing with groups, and the access rule.
 
-Le contrôle d'accès vit ICI, au plus près des données : une KB est lisible
-par son propriétaire et par les membres des groupes auxquels elle est
-partagée. `accessible_kb_ids()` interroge `users` (auth propagée) pour les
-groupes, puis résout en SQL — c'est ce filtre que la recherche vectorielle
-applique.
+Access control lives HERE, as close to the data as possible: a KB is
+readable by its owner and by the members of the groups it is shared with.
+`accessible_kb_ids()` queries `users` (auth propagated) for the groups,
+then resolves in SQL — this is the filter the vector search applies.
 """
 
 from typing import Optional
@@ -45,9 +44,9 @@ class Grant(BaseModel):
 
 
 def accessible_kb_ids(auth) -> list:
-    """KB du propriétaire + KB partagées aux groupes de l'utilisateur."""
+    """Owner's KBs + KBs shared with the user's groups."""
     ids = {k.id for k in KnowledgeBase.find(owner_id=auth["user_id"])}
-    groups = users.my_groups()  # appel inter-services, auth propagée
+    groups = users.my_groups()  # inter-service call, auth propagated
     for g in groups["groups"]:
         ids.update(a.kb_id for a in KbAccess.find(group_id=g["id"]))
     return sorted(ids)
@@ -56,16 +55,16 @@ def accessible_kb_ids(auth) -> list:
 def owned_kb(kb_id: int, auth) -> KnowledgeBase:
     base = KnowledgeBase.get(kb_id)
     if base is None:
-        raise APIError.not_found(f"knowledge base {kb_id} introuvable")
+        raise APIError.not_found(f"knowledge base {kb_id} not found")
     if base.owner_id != auth["user_id"]:
-        raise APIError.permission_denied("réservé au propriétaire de la KB")
+        raise APIError.permission_denied("reserved for the KB owner")
     return base
 
 
 @api(method="POST", path="/kbs", auth=True)
 def create_kb(body: NewKb, auth) -> dict:
     base = KnowledgeBase.create(name=body.name, owner_id=auth["user_id"])
-    log.info("kb créée", kb_id=base.id, name=base.name)
+    log.info("kb created", kb_id=base.id, name=base.name)
     return {"id": base.id, "name": base.name}
 
 
@@ -74,7 +73,7 @@ def grant_kb(id, body: Grant, auth) -> dict:
     base = owned_kb(int(id), auth)
     if not KbAccess.find_one(kb_id=base.id, group_id=body.group_id):
         KbAccess.create(kb_id=base.id, group_id=body.group_id)
-    log.info("kb partagée", kb_id=base.id, group_id=body.group_id)
+    log.info("kb shared", kb_id=base.id, group_id=body.group_id)
     return {"kb_id": base.id, "group_id": body.group_id}
 
 

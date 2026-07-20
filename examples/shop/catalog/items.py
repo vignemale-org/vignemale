@@ -1,4 +1,4 @@
-"""Endpoints « items » du service catalog."""
+"""The catalog service's "items" endpoints."""
 
 from pydantic import BaseModel
 

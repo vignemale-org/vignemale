@@ -1,13 +1,13 @@
-// Exécution des requêtes (hors transaction) + tracing — miroir du client.rs
-// d'Encore (le QueryTracer y pousse vers leur protocole de trace ; ici on
-// pousse vers les logs structurés, l'export OTel viendra en phase 5).
+// Query execution (outside a transaction) + tracing — mirror of Encore's
+// client.rs (their QueryTracer pushes to their trace protocol; here we
+// push to the structured logs, OTel export will come in phase 5).
 
 use deadpool_postgres::Pool;
 
 use super::manager::get_conn;
 use super::val::{params_refs, rows_to_json, SqlParam};
 
-/// Trace chaque requête : durée + requête (tronquée) ; erreurs en ERROR.
+/// Traces every query: duration + query (truncated); errors at ERROR level.
 pub(crate) fn trace_query<T>(
     sql: &str,
     started: std::time::Instant,
@@ -17,15 +17,15 @@ pub(crate) fn trace_query<T>(
     let ms = started.elapsed().as_millis() as u64;
     match result {
         Ok(_) => {
-            tracing::debug!(target: "vignemale::sqldb", query = %q, duration_ms = ms, "requête sql")
+            tracing::debug!(target: "vignemale::sqldb", query = %q, duration_ms = ms, "sql query")
         }
         Err(e) => {
-            tracing::error!(target: "vignemale::sqldb", query = %q, duration_ms = ms, error = %e, "requête sql en échec")
+            tracing::error!(target: "vignemale::sqldb", query = %q, duration_ms = ms, error = %e, "sql query failed")
         }
     }
 }
 
-/// Exécute une requête et renvoie les lignes (tableau JSON d'objets).
+/// Executes a query and returns the rows (JSON array of objects).
 pub async fn query(
     pool: &Pool,
     sql: &str,
@@ -42,9 +42,9 @@ pub async fn query(
     result
 }
 
-/// Valide une requête par PREPARE — sans l'exécuter (le mécanisme de
-/// `sqlx::query!`, déplacé au moment `vignemale check`). Postgres vérifie
-/// syntaxe, tables, colonnes, et infère les types : on les renvoie.
+/// Validates a query via PREPARE — without executing it (the mechanism of
+/// `sqlx::query!`, moved to `vignemale check` time). Postgres checks
+/// syntax, tables, columns, and infers the types: we return them.
 pub async fn prepare(pool: &Pool, sql: &str) -> anyhow::Result<serde_json::Value> {
     let started = std::time::Instant::now();
     let result = async {
@@ -63,8 +63,8 @@ pub async fn prepare(pool: &Pool, sql: &str) -> anyhow::Result<serde_json::Value
     result
 }
 
-/// Exécute un script SQL **multi-instructions** (simple query protocol) —
-/// pour les fichiers de migration. Pas de paramètres.
+/// Executes a **multi-statement** SQL script (simple query protocol) —
+/// for migration files. No parameters.
 pub async fn batch(pool: &Pool, sql: &str) -> anyhow::Result<()> {
     let started = std::time::Instant::now();
     let result = async {
@@ -77,8 +77,8 @@ pub async fn batch(pool: &Pool, sql: &str) -> anyhow::Result<()> {
     result
 }
 
-/// Exécute une commande (INSERT/UPDATE/DELETE/DDL) et renvoie le nombre de
-/// lignes affectées.
+/// Executes a command (INSERT/UPDATE/DELETE/DDL) and returns the number of
+/// affected rows.
 pub async fn execute(pool: &Pool, sql: &str, params: Vec<SqlParam>) -> anyhow::Result<u64> {
     let started = std::time::Instant::now();
     let result = async {

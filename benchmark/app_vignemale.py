@@ -1,5 +1,5 @@
-"""App benchmark — Vignemale. Trois endpoints : JSON simple, param de chemin,
-body validé Pydantic. Lancée par bench.sh (port 8080)."""
+"""Benchmark app — Vignemale. Three endpoints: simple JSON, path param,
+Pydantic-validated body. Launched by bench.sh (port 8080)."""
 
 from pydantic import BaseModel
 

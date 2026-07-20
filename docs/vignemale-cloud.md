@@ -1,124 +1,127 @@
-# Vignemale Cloud — plateforme de déploiement (note de conception)
+# Vignemale Cloud — deployment platform (design note)
 
-> Vision : `vignemale login` + `vignemale deploy` → une équipe gère ses
-> déploiements depuis une plateforme. Le CLI parle à un **control plane**
-> (serveur Vignemale) qui orchestre le provisioning + le deploy sur le cloud EU.
+> Vision: `vignemale login` + `vignemale deploy` → a team manages its
+> deployments from a platform. The CLI talks to a **control plane**
+> (Vignemale server) that orchestrates provisioning + deploy on the EU cloud.
 
-## 1. La bascule d'architecture (≠ Phase 4 "BYOC-laptop")
+## 1. The architectural shift (≠ Phase 4 "BYOC-laptop")
 
-La Phase 4 esquissée mettait l'orchestration Scaleway **dans le CLI**, exécutée
-depuis le laptop du dev. Le modèle "Cloud / équipe" **centralise** cette
-orchestration dans le control plane. Conséquences :
+The sketched Phase 4 put Scaleway orchestration **in the CLI**, run from the
+dev's laptop. The "Cloud / team" model **centralizes** this orchestration in the
+control plane. Consequences:
 
-- **Le moteur d'orchestration (driver Scaleway) vit côté serveur**, pas dans le
-  CLI. Le CLI devient un **client mince** : authentifie, envoie une requête de
-  deploy, streame les logs en retour.
-- Bénéfices : audit centralisé, RBAC, cohérence (un seul moteur), **pas de
-  credentials cloud sur les laptops**, secrets centralisés et chiffrés.
-- On garde un mode **self-hosted / open-source** : le même moteur tourne en
-  local via `vignemale deploy --local` (BYOC depuis le laptop), pour ceux qui ne
-  veulent pas de la plateforme.
+- **The orchestration engine (Scaleway driver) lives on the server side**, not in
+  the CLI. The CLI becomes a **thin client**: it authenticates, sends a deploy
+  request, and streams the logs back.
+- Benefits: centralized audit, RBAC, consistency (a single engine), **no cloud
+  credentials on laptops**, centralized and encrypted secrets.
+- We keep a **self-hosted / open-source** mode: the same engine runs locally via
+  `vignemale deploy --local` (BYOC from the laptop), for those who don't want the
+  platform.
 
-→ Décision dérivée : le **driver Scaleway** (tranches 2-4 de Phase 4) doit être
-une **brique réutilisable** appelée soit par le control plane, soit par le CLI
-en `--local`.
+→ Derived decision: the **Scaleway driver** (slices 2-4 of Phase 4) must be a
+**reusable building block** called either by the control plane or by the CLI in
+`--local` mode.
 
-## 2. Anatomie du control plane
+## 2. Anatomy of the control plane
 
-| Brique | Rôle |
+| Building block | Role |
 |---|---|
-| **API** (REST/gRPC) | sert le CLI + le dashboard web équipe |
-| **Identité** | users, teams/orgs, **RBAC**, tokens (login par device-flow) |
-| **Modèle** | apps, **environnements** (staging/prod), config + secrets par env |
-| **Orchestrateur** | **file de jobs** (deploy = async, multi-étapes, idempotent, retries) + workers qui appellent Scaleway |
-| **État** | ressources provisionnées (IDs Scaleway), historique de rollout, rollback |
-| **Store** | Postgres (état) + **chiffrement des secrets au repos** |
-| **Observabilité** | agrégation logs/métriques (l'argument de vente différenciant) |
+| **API** (REST/gRPC) | serves the CLI + the team web dashboard |
+| **Identity** | users, teams/orgs, **RBAC**, tokens (login via device-flow) |
+| **Model** | apps, **environments** (staging/prod), config + secrets per env |
+| **Orchestrator** | **job queue** (deploy = async, multi-step, idempotent, retries) + workers that call Scaleway |
+| **State** | provisioned resources (Scaleway IDs), rollout history, rollback |
+| **Store** | Postgres (state) + **encryption of secrets at rest** |
+| **Observability** | log/metric aggregation (the differentiating selling point) |
 
-## 3. Décisions structurantes
+## 3. Structuring decisions
 
-1. **Que envoie `vignemale deploy` ?**
-   - (a) *CLI build+push l'image* (on a déjà le build rapide + image de base),
-     puis envoie `meta + digest d'image + config` au serveur, qui
-     provisionne+déploie. **Serveur léger. Reco MVP.**
-   - (b) *Serveur build depuis git* (façon Encore : push = build serveur-side,
-     reproductible). Plus "vraie plateforme" mais nécessite une **build farm**.
-   → Démarrer en (a), garder (b) comme évolution.
+1. **What does `vignemale deploy` send?**
+   - (a) *CLI builds+pushes the image* (we already have the fast build + base
+     image), then sends `meta + image digest + config` to the server, which
+     provisions+deploys. **Lightweight server. MVP recommendation.**
+   - (b) *Server builds from git* (Encore-style: push = server-side build,
+     reproducible). More of a "real platform" but requires a **build farm**.
+   → Start with (a), keep (b) as an evolution.
 
-2. **Où vont les déploiements ? — DÉCIDÉ : BYOC + control plane managé qui facture.**
-   On déploie **toujours dans le compte Scaleway du CLIENT** (il connecte une clé
-   IAM restreinte), mais l'orchestration passe par le **serveur distant** qui
-   garde le contrôle (RBAC, état, secrets, audit, historique). Vignemale **facture
-   le service de plateforme** (orchestration + management + observabilité), pas la
-   compute (que le client paie directement à Scaleway).
-   - Avantage : pas de statut de revendeur cloud, pas d'infra compute partagée à
-     isoler, mais on garde un produit facturable et le contrôle.
-   - Sécurité : le control plane détient les **creds Scaleway de N clients** → le
-     chiffrement au repos + l'isolation des secrets par tenant restent critiques
-     (mais pas d'isolation de compute multi-tenant à gérer).
-   - `--local` : le même moteur tourne sur le laptop sans serveur (open-source /
-     self-hosted), déployant dans le même compte client.
+2. **Where do deployments go? — DECIDED: BYOC + managed control plane that bills.**
+   We **always** deploy **into the CUSTOMER's Scaleway account** (they connect a
+   restricted IAM key), but orchestration goes through the **remote server** that
+   keeps control (RBAC, state, secrets, audit, history). Vignemale **bills for the
+   platform service** (orchestration + management + observability), not the
+   compute (which the customer pays directly to Scaleway).
+   - Advantage: no cloud reseller status, no shared compute infra to isolate, but
+     we keep a billable product and control.
+   - Security: the control plane holds the **Scaleway creds of N customers** →
+     encryption at rest + per-tenant secret isolation remain critical (but no
+     multi-tenant compute isolation to manage).
+   - `--local`: the same engine runs on the laptop without a server (open-source /
+     self-hosted), deploying into the same customer account.
 
-3. **Login** : OAuth **device-flow** (`vignemale login` ouvre le navigateur,
-   confirme un code) → token dans `~/.vignemale/auth.json`. Le CLI joint le token
-   à chaque requête.
+3. **Login**: OAuth **device-flow** (`vignemale login` opens the browser,
+   confirms a code) → token in `~/.vignemale/auth.json`. The CLI attaches the
+   token to every request.
 
-4. **Sécurité — LE point dur** : le control plane détient les creds cloud et les
-   secrets de N équipes. Chiffrement au repos (KMS/enveloppe), IAM
-   least-privilege par app/env, **isolation tenant**, audit log, rotation des
-   secrets. C'est le chantier critique dès qu'on passe en managé multi-tenant.
+4. **Security — THE hard point**: the control plane holds the cloud creds and the
+   secrets of N teams. Encryption at rest (KMS/envelope), least-privilege IAM per
+   app/env, **tenant isolation**, audit log, secret rotation. This is the critical
+   effort as soon as we move to managed multi-tenant.
 
-## 4. Le protocole de deploy (esquisse)
+## 4. The deploy protocol (sketch)
 
 ```
-vignemale login                         # device-flow → token local
-vignemale deploy --env prod             # build+push image, POST au control plane
+vignemale login                         # device-flow → local token
+vignemale deploy --env prod             # build+push image, POST to the control plane
 
 POST /apps/{app}/envs/{env}/deploys
   { meta, image_digest, config }  ->  { deploy_id }
 GET  /deploys/{deploy_id}/logs (stream SSE)
 
-Étapes serveur (job idempotent, repris en cas d'échec) :
-  valider meta → diff vs état → provisionner (DB/bucket/secrets manquants) →
+Server steps (idempotent job, resumed on failure):
+  validate meta → diff vs state → provision (missing DB/bucket/secrets) →
   migrations → rollout container (Serverless Container) → health →
-  bascule trafic → done   (sinon rollback automatique)
+  traffic switch → done   (otherwise automatic rollback)
 ```
 
-Le `meta` (déjà produit par `collect`) est l'entrée : il dit au serveur quelles
-ressources existent à réconcilier. Le **provider switch** fait que déployer =
-créer les ressources puis **poser les `VIGNEMALE_*`** sur le container.
+The `meta` (already produced by `collect`) is the input: it tells the server which
+resources exist to reconcile. The **provider switch** means that deploying =
+creating the resources then **setting the `VIGNEMALE_*` variables** on the
+container.
 
-## 5. Stack du control plane
+## 5. Control plane stack
 
-API + Postgres (état) + file de jobs + workers Scaleway + dashboard web.
-Bootstrap avec une stack stable ; **dogfood en Vignemale** une fois mûr (le
-control plane est lui-même une app Vignemale déployable sur Scaleway). Attention
-au bootstrap (poule/œuf : le premier deploy se fait à la main).
+API + Postgres (state) + job queue + Scaleway workers + web dashboard.
+Bootstrap with a stable stack; **dogfood in Vignemale** once mature (the control
+plane is itself a Vignemale app deployable on Scaleway). Watch out for the
+bootstrap (chicken/egg: the first deploy is done by hand).
 
-## 6. Chemin par phases
+## 6. Phased path
 
-1. **`vignemale login`** (device-flow) + control plane minimal (auth, modèle
-   apps/envs) — sans deploy réel. Valide l'identité et le lien CLI↔serveur.
-2. **Moteur d'orchestration Scaleway** (le driver de Phase 4), réutilisable :
-   `provision --dry-run` → réel. Appelable en `--local` ou par le serveur.
-3. **`vignemale deploy`** : CLI build+push image → POST au serveur → orchestration
-   → stream des logs. Bout-en-bout sur une vraie app.
-4. **Dashboard équipe** : RBAC, envs, secrets, historique, rollback.
-5. **Observabilité agrégée** (logs/métriques). Puis évolution **managed
+1. **`vignemale login`** (device-flow) + minimal control plane (auth, apps/envs
+   model) — without real deploy. Validates identity and the CLI↔server link.
+2. **Scaleway orchestration engine** (the Phase 4 driver), reusable:
+   `provision --dry-run` → real. Callable in `--local` mode or by the server.
+3. **`vignemale deploy`**: CLI builds+pushes image → POST to the server →
+   orchestration → log stream. End-to-end on a real app.
+4. **Team dashboard**: RBAC, envs, secrets, history, rollback.
+5. **Aggregated observability** (logs/metrics). Then evolution to **managed
    multi-tenant + billing**.
 
-## 7. Risques / questions ouvertes
+## 7. Risks / open questions
 
-- **Managed multi-tenant** = sécurité + billing + conformité : très lourd, à ne
-  pas sous-estimer (≠ BYOC).
-- **Build serveur-side** (option 1b) = build farm à opérer.
-- **Bootstrap/dogfood** du control plane.
-- Réutilisabilité du driver Scaleway entre CLI `--local` et serveur : à concevoir
-  comme une lib dès la tranche 2 de Phase 4.
+- **Managed multi-tenant** = security + billing + compliance: very heavy, not to
+  be underestimated (≠ BYOC).
+- **Server-side build** (option 1b) = a build farm to operate.
+- **Bootstrap/dogfood** of the control plane.
+- Reusability of the Scaleway driver between CLI `--local` and server: to be
+  designed as a library from slice 2 of Phase 4.
 
-## Lien avec l'existant
-- `docs/phase4-deploy.md` reste valable pour le **moteur d'orchestration** ; ce
-  document décide seulement **où il tourne** (serveur centralisé vs laptop) et
-  **comment l'équipe pilote** (login + plateforme).
-- L'image de base CI (`docker/runtime.Dockerfile` + workflow) sert l'option 1a :
-  le CLI produit vite une image multi-arch poussable vers le registry cible.
+## Link with the existing work
+- `docs/phase4-deploy.md` remains valid for the **orchestration engine**; this
+  document only decides **where it runs** (centralized server vs laptop) and
+  **how the team drives it** (login + platform).
+- The CI base image (`docker/runtime.Dockerfile` + workflow) serves option 1a:
+  the CLI quickly produces a multi-arch image pushable to the target registry.
+</content>
+</invoke>

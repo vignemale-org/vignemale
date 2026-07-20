@@ -1,6 +1,6 @@
-"""Indexation : upload (PDF ou texte) → extraction → chunks → embeddings →
-pgvector, le tout dans UNE transaction. Et la recherche vectorielle filtrée
-par permissions — le filtre d'accès est DANS la requête SQL elle-même.
+"""Indexing: upload (PDF or text) → extraction → chunks → embeddings →
+pgvector, all within ONE transaction. And the vector search filtered by
+permissions — the access filter is IN the SQL query itself.
 """
 
 import base64
@@ -25,7 +25,7 @@ class Document(Table):
     chunks: int = 0
 
 
-# la table des chunks porte un `vector` pgvector → SQL brut (hors ORM)
+# the chunks table carries a pgvector `vector` → raw SQL (outside the ORM)
 Document.ensure_table()
 db.execute("CREATE EXTENSION IF NOT EXISTS vector")
 db.execute(
@@ -44,7 +44,7 @@ db.execute(
 
 class NewDocument(BaseModel):
     filename: str
-    content_b64: str  # PDF ou texte (UTF-8), encodé base64
+    content_b64: str  # PDF or text (UTF-8), base64-encoded
 
 
 class VectorQuery(BaseModel):
@@ -60,7 +60,7 @@ def _extract_text(filename: str, data: bytes) -> str:
             from pypdf import PdfReader
         except ImportError:
             raise APIError.unimplemented(
-                "extraction PDF : `pip install pypdf`"
+                "PDF extraction: `pip install pypdf`"
             ) from None
         reader = PdfReader(BytesIO(data))
         return "\n\n".join(page.extract_text() or "" for page in reader.pages)
@@ -68,7 +68,7 @@ def _extract_text(filename: str, data: bytes) -> str:
         return data.decode("utf-8")
     except UnicodeDecodeError:
         raise APIError.invalid_argument(
-            f"{filename}: ni un PDF ni du texte UTF-8"
+            f"{filename}: neither a PDF nor UTF-8 text"
         ) from None
 
 
@@ -76,46 +76,46 @@ def _extract_text(filename: str, data: bytes) -> str:
 def upload_document(id, body: NewDocument, auth) -> dict:
     kb_id = int(id)
     if kb_id not in accessible_kb_ids(auth):
-        raise APIError.permission_denied("pas d'accès à cette knowledge base")
+        raise APIError.permission_denied("no access to this knowledge base")
 
     text = _extract_text(body.filename, base64.b64decode(body.content_b64))
-    morceaux = chunk_text(text)
-    if not morceaux:
-        raise APIError.invalid_argument(f"{body.filename}: aucun texte extrait")
+    chunks = chunk_text(text)
+    if not chunks:
+        raise APIError.invalid_argument(f"{body.filename}: no text extracted")
 
-    # document + chunks + embeddings : atomique
+    # document + chunks + embeddings: atomic
     with db.transaction() as tx:
         doc = tx.query_row(
             "INSERT INTO documents (kb_id, filename, chunks) "
             "VALUES ($1, $2, $3) RETURNING id",
             kb_id,
             body.filename,
-            len(morceaux),
+            len(chunks),
         )
-        for seq, contenu in enumerate(morceaux):
+        for seq, content in enumerate(chunks):
             tx.execute(
                 "INSERT INTO chunks (document_id, kb_id, seq, content, embedding) "
                 "VALUES ($1, $2, $3, $4, $5::text::vector)",
                 doc["id"],
                 kb_id,
                 seq,
-                contenu,
-                to_pgvector(embed(contenu)),
+                content,
+                to_pgvector(embed(content)),
             )
 
     log.info(
-        "document indexé",
+        "document indexed",
         document_id=doc["id"], kb_id=kb_id, filename=body.filename,
-        chunks=len(morceaux),
+        chunks=len(chunks),
     )
-    return {"document_id": doc["id"], "filename": body.filename, "chunks": len(morceaux)}
+    return {"document_id": doc["id"], "filename": body.filename, "chunks": len(chunks)}
 
 
 @api(method="POST", path="/vector-search", auth=True)
 def vector_search(body: VectorQuery, auth) -> dict:
-    """Recherche vectorielle **filtrée par les permissions de l'appelant** :
-    seules les KB accessibles (propriété ou groupe) sont interrogées — le
-    filtre est dans le WHERE, pas après coup."""
+    """Vector search **filtered by the caller's permissions**:
+    only accessible KBs (owned or via a group) are queried — the
+    filter is in the WHERE, not after the fact."""
     kb_ids = accessible_kb_ids(auth)
     if not kb_ids:
         return {"results": []}

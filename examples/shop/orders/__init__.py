@@ -1,4 +1,4 @@
-"""Service `orders` — un DOSSIER = un service (façon Encore)."""
+"""Service `orders` — one FOLDER = one service (Encore-style)."""
 
 from vignemale import Service
 

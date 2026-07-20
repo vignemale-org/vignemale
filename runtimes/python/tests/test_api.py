@@ -1,4 +1,4 @@
-"""Serveur API (app_hello.py) : unary, param de chemin, body JSON, streaming SSE."""
+"""API server (app_hello.py): unary, path param, JSON body, SSE streaming."""
 
 import os
 import sys
@@ -18,7 +18,7 @@ def hello():
 
 
 def test_unary(hello):
-    assert request(hello, "/hello") == (200, {"msg": "bonjour depuis vignemale"})
+    assert request(hello, "/hello") == (200, {"msg": "hello from vignemale"})
 
 
 def test_path_param(hello):
@@ -31,12 +31,12 @@ def test_body_json(hello):
 
 
 def test_streaming_sse(hello):
-    assert sse(hello, "/stream") == "ceci est un flux vignemale token par token".split(" ")
+    assert sse(hello, "/stream") == "this is a vignemale stream token by token".split(" ")
 
 
 def test_query_params(hello):
     assert request(hello, "/search?q=midi&limit=3") == (200, {"q": "midi", "limit": "3"})
-    # paramètre absent → défaut côté handler
+    # missing param → default on the handler side
     assert request(hello, "/search?q=x") == (200, {"q": "x", "limit": "10"})
 
 
@@ -58,7 +58,7 @@ def test_healthz(hello):
 
 
 def test_unknown_route_is_structured_404(hello):
-    status, body = request(hello, "/nexiste/pas")
+    status, body = request(hello, "/does/not/exist")
     assert status == 404
     assert body["code"] == "not_found"
 
@@ -67,10 +67,10 @@ def test_malformed_json_body_is_400(hello):
     import urllib.error
     import urllib.request
 
-    req = urllib.request.Request(f"http://{hello}/echo", data=b"{pas du json")
+    req = urllib.request.Request(f"http://{hello}/echo", data=b"{not json")
     try:
         urllib.request.urlopen(req, timeout=5)
-        assert False, "un corps JSON invalide doit être rejeté"
+        assert False, "an invalid JSON body must be rejected"
     except urllib.error.HTTPError as e:
         assert e.code == 400
         import json as _json

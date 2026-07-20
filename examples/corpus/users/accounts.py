@@ -1,4 +1,4 @@
-"""Comptes : inscription, token en base, auth handler."""
+"""Accounts: signup, token in the database, auth handler."""
 
 import secrets
 from typing import Optional
@@ -14,9 +14,9 @@ class User(Table):
     __subject__ = "id"
 
     id: Optional[int] = None
-    email: str = PII(purpose="compte et contact")
-    name: str = PII(purpose="personnalisation")
-    token: str = PII(purpose="authentification")
+    email: str = PII(purpose="account and contact")
+    name: str = PII(purpose="personalization")
+    token: str = PII(purpose="authentication")
 
 
 class Signup(BaseModel):
@@ -35,13 +35,13 @@ def check_token(token):
 @api(method="POST", path="/signup")
 def signup(body: Signup) -> dict:
     if "@" not in body.email:
-        raise APIError.invalid_argument(f"email invalide : {body.email!r}")
+        raise APIError.invalid_argument(f"invalid email: {body.email!r}")
     if User.find_one(email=body.email):
-        raise APIError.already_exists(f"un compte existe déjà pour {body.email}")
+        raise APIError.already_exists(f"an account already exists for {body.email}")
     user = User.create(
         email=body.email, name=body.name, token="vgm-" + secrets.token_hex(16)
     )
-    log.info("compte créé", user_id=user.id)
+    log.info("account created", user_id=user.id)
     return {"user_id": user.id, "name": user.name, "token": user.token}
 
 

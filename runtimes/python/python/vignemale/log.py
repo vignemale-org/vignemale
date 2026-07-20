@@ -1,12 +1,12 @@
-"""Logs structurés (JSON sur stderr) — même format que les logs du core Rust.
+"""Structured logs (JSON on stderr) — same format as the Rust core logs.
 
     from vignemale import log
 
-    log.info("commande créée", order_id=42, user="jacques")
-    log.error("paiement refusé", reason="solde insuffisant")
+    log.info("order created", order_id=42, user="jacques")
+    log.error("payment declined", reason="insufficient balance")
 
-Chaque ligne est un objet JSON : timestamp, level, target, message + tes champs.
-Le niveau minimum suit `VIGNEMALE_LOG` (debug | info | warn | error ; défaut info).
+Each line is a JSON object: timestamp, level, target, message + your fields.
+The minimum level follows `VIGNEMALE_LOG` (debug | info | warn | error; default info).
 """
 
 import json
@@ -19,8 +19,8 @@ _LEVELS = {"debug": 10, "info": 20, "warn": 30, "error": 40}
 
 def _min_level() -> int:
     raw = os.environ.get("VIGNEMALE_LOG", "info").lower()
-    # VIGNEMALE_LOG accepte la syntaxe EnvFilter côté Rust ("vignemale=trace") ;
-    # côté Python on ne retient que le niveau global s'il est reconnu.
+    # VIGNEMALE_LOG accepts the Rust-side EnvFilter syntax ("vignemale=trace");
+    # on the Python side we only honor the global level when it is recognized.
     return _LEVELS.get(raw, 20)
 
 

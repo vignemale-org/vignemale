@@ -1,13 +1,13 @@
 name: Release PyPI
 
-# Publie sur PyPI sur tag de version (vX.Y.Z) :
-#   - vignemale : wheels abi3 multi-plateformes (runtime Rust+PyO3 + CLI inclus) + sdist
-# Auth : Trusted Publishing (OIDC, pas de token) — configurer le publisher sur
-# PyPI (et/ou TestPyPI) pour le projet `vignemale` (org vignemale-org / repo
-# vignemale / ce workflow / environnement « pypi »).
+# Publishes to PyPI on a version tag (vX.Y.Z):
+#   - vignemale: multi-platform abi3 wheels (Rust+PyO3 runtime + CLI included) + sdist
+# Auth: Trusted Publishing (OIDC, no token) — configure the publisher on
+# PyPI (and/or TestPyPI) for the `vignemale` project (org vignemale-org / repo
+# vignemale / this workflow / environment "pypi").
 #
-# - tag vX.Y.Z         → publie sur PyPI (réel)
-# - run manuel (UI)    → choisir la cible : testpypi (essai blanc) ou pypi
+# - tag vX.Y.Z         → publishes to PyPI (real)
+# - manual run (UI)    → choose the target: testpypi (dry run) or pypi
 
 on:
   push:
@@ -15,7 +15,7 @@ on:
   workflow_dispatch:
     inputs:
       target:
-        description: "Cible de publication"
+        description: "Publication target"
         type: choice
         options: [testpypi, pypi]
         default: testpypi
@@ -24,7 +24,7 @@ permissions:
   contents: read
 
 jobs:
-  # ---- wheels du runtime (abi3 : un wheel par plateforme couvre Python ≥ 3.9) ----
+  # ---- runtime wheels (abi3: one wheel per platform covers Python ≥ 3.9) ----
   wheels:
     name: wheels ${{ matrix.os }}/${{ matrix.target }}
     runs-on: ${{ matrix.os }}
@@ -33,23 +33,23 @@ jobs:
       matrix:
         include:
           - { os: ubuntu-latest, target: x86_64 }
-          # aarch64 sur runner ARM64 NATIF (gratuit pour repos publics) : la
-          # cross-compilation via conteneur émulé casse dès qu'une dep compile du
-          # C/asm (ring, aws-lc…). En natif, tout compile normalement.
+          # aarch64 on a NATIVE ARM64 runner (free for public repos): cross-
+          # compilation via an emulated container breaks as soon as a dep compiles
+          # C/asm (ring, aws-lc…). Natively, everything compiles normally.
           - { os: ubuntu-24.04-arm, target: aarch64 }
-          # macOS : un seul runner arm64 (macos-latest), les DEUX arch par
-          # cross-compilation (clang + SDK Apple universel = cross fiable, contrairement
-          # à Linux). Évite le runner macOS Intel, rare et lent en file d'attente.
+          # macOS: a single arm64 runner (macos-latest), BOTH arches via
+          # cross-compilation (clang + universal Apple SDK = reliable cross, unlike
+          # Linux). Avoids the macOS Intel runner, rare and slow in the queue.
           - { os: macos-latest, target: x86_64-apple-darwin }
           - { os: macos-latest, target: aarch64-apple-darwin }
           - { os: windows-latest, target: x64 }
     steps:
       - uses: actions/checkout@v4
 
-      # Pas d'install protoc : le build.rs du runtime utilise un protoc vendoré
-      # (crate protoc-bin-vendored), hermétique sur tous les OS/arch (y compris
-      # le conteneur manylinux et la cross-compilation aarch64). TLS Postgres en
-      # rustls → pas d'OpenSSL système non plus.
+      # No protoc install: the runtime's build.rs uses a vendored protoc
+      # (crate protoc-bin-vendored), hermetic on all OS/arch (including the
+      # manylinux container and aarch64 cross-compilation). Postgres TLS via
+      # rustls → no system OpenSSL either.
       - uses: PyO3/maturin-action@v1
         with:
           working-directory: runtimes/python
@@ -62,7 +62,7 @@ jobs:
           name: wheels-${{ matrix.os }}-${{ matrix.target }}
           path: runtimes/python/dist/*.whl
 
-  # ---- sdist du runtime + paquets pur-Python (cli, deploy) ----
+  # ---- runtime sdist + pure-Python packages (cli, deploy) ----
   sdist-pure:
     runs-on: ubuntu-latest
     steps:
@@ -71,7 +71,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: sdist du runtime (SDK + CLI dans un seul paquet)
+      - name: runtime sdist (SDK + CLI in a single package)
         uses: PyO3/maturin-action@v1
         with:
           working-directory: runtimes/python
@@ -83,7 +83,7 @@ jobs:
           name: sdist
           path: runtimes/python/dist/*
 
-  # ---- publication PyPI (Trusted Publishing, OIDC) ----
+  # ---- PyPI publication (Trusted Publishing, OIDC) ----
   publish:
     needs: [wheels, sdist-pure]
     runs-on: ubuntu-latest
@@ -97,19 +97,19 @@ jobs:
           pattern: "*"
           merge-multiple: true
 
-      # essai blanc : run manuel avec target=testpypi
-      - name: publier sur TestPyPI
+      # dry run: manual run with target=testpypi
+      - name: publish to TestPyPI
         if: github.event_name == 'workflow_dispatch' && inputs.target == 'testpypi'
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist
           repository-url: https://test.pypi.org/legacy/
 
-      # réel : sur tag vX.Y.Z, ou run manuel avec target=pypi.
-      # Auth par token API (secret PYPI_API_TOKEN) — pas besoin de configurer le
-      # Trusted Publisher. À durcir plus tard : remplacer le token « compte » par
-      # un token « projet » (possible maintenant que vignemale existe sur PyPI).
-      - name: publier sur PyPI
+      # real: on tag vX.Y.Z, or a manual run with target=pypi.
+      # Auth via API token (secret PYPI_API_TOKEN) — no need to configure the
+      # Trusted Publisher. To harden later: replace the "account" token with a
+      # "project" token (possible now that vignemale exists on PyPI).
+      - name: publish to PyPI
         if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.target == 'pypi')
         uses: pypa/gh-action-pypi-publish@release/v1
         with:

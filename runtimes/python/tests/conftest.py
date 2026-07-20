@@ -1,4 +1,4 @@
-"""Helpers partagés des tests : lancer une app en sous-process + client HTTP minimal."""
+"""Shared test helpers: run an app in a subprocess + a minimal HTTP client."""
 
 import json
 import os
@@ -19,7 +19,7 @@ def free_port() -> int:
 
 
 class Server:
-    """Lance une app vignemale en sous-process et attend qu'elle réponde."""
+    """Runs a vignemale app in a subprocess and waits until it responds."""
 
     def __init__(self, cmd, addr, env=None, capture=False):
         self.addr = addr
@@ -31,16 +31,16 @@ class Server:
         while time.time() < deadline:
             if self.proc.poll() is not None:
                 raise RuntimeError(
-                    f"le serveur s'est arrêté au démarrage (code {self.proc.returncode})"
+                    f"the server exited during startup (code {self.proc.returncode})"
                 )
             try:
                 urllib.request.urlopen(f"http://{addr}/", timeout=1)
                 return
             except urllib.error.HTTPError:
-                return  # une réponse HTTP (même 404) = le serveur est prêt
+                return  # an HTTP response (even 404) = the server is ready
             except Exception:
                 time.sleep(0.1)
-        raise RuntimeError("le serveur n'a pas démarré en 20 s")
+        raise RuntimeError("the server did not start within 20 s")
 
     def stop(self):
         if self.proc.poll() is None:
@@ -52,7 +52,7 @@ class Server:
 
 
 def request(addr: str, path: str, body=None):
-    """GET (ou POST si `body`) → (status, JSON décodé). Ne lève pas sur 4xx/5xx."""
+    """GET (or POST if `body`) → (status, decoded JSON). Does not raise on 4xx/5xx."""
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(f"http://{addr}{path}", data=data)
     try:
@@ -63,7 +63,7 @@ def request(addr: str, path: str, body=None):
 
 
 def sse(addr: str, path: str, body=None) -> list:
-    """GET/POST streaming → liste des fragments `data:` reçus."""
+    """GET/POST streaming → list of the received `data:` fragments."""
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(f"http://{addr}{path}", data=data)
     chunks = []

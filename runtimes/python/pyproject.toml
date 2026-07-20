@@ -5,7 +5,7 @@ build-backend = "maturin"
 [project]
 name = "vignemale"
 version = "0.1.3"
-description = "Vignemale — déploie tes agents IA en production sur Scaleway, depuis Python."
+description = "Vignemale — deploy your AI agents to production on Scaleway, from Python."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MPL-2.0" }
@@ -21,11 +21,11 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "pydantic>=2",      # validation des @api typés
-    # Le CLI (run/check/deploy/gen/link) vit dans le même wheel que le runtime :
-    # ses deps sont donc core, sinon `pip install vignemale` casse dès `vignemale run`.
-    "griffe>=1.0",      # collecte statique du graphe (@api / Service)
-    "protobuf>=5",      # (dé)sérialisation du meta.proto
+    "pydantic>=2",      # validation of the typed @api
+    # The CLI (run/check/deploy/gen/link) lives in the same wheel as the runtime:
+    # its deps are therefore core, otherwise `pip install vignemale` breaks at `vignemale run`.
+    "griffe>=1.0",      # static collection of the graph (@api / Service)
+    "protobuf>=5",      # (de)serialization of the meta.proto
 ]
 
 [project.urls]
@@ -34,19 +34,19 @@ Repository = "https://github.com/vignemale-org/vignemale"
 Issues = "https://github.com/vignemale-org/vignemale/issues"
 
 [project.optional-dependencies]
-# `cli` conservé (vide) pour compat : `pip install vignemale[cli]` reste valide,
-# griffe/protobuf sont désormais des deps core.
+# `cli` kept (empty) for compat: `pip install vignemale[cli]` stays valid,
+# griffe/protobuf are now core deps.
 cli = []
 dev = ["pytest>=8", "pydantic-ai-slim[anthropic]>=1.0"]
 
-# La commande `vignemale`.
+# The `vignemale` command.
 [project.scripts]
 vignemale = "vignemale_cli.cli:main"
 
 [tool.maturin]
-# Projet mixte : code Python sous python/, extension Rust = vignemale._core
+# Mixed project: Python code under python/, Rust extension = vignemale._core
 python-source = "python"
-# inclut le SDK (vignemale) ET l'outil CLI (vignemale_cli) dans le même wheel.
+# includes the SDK (vignemale) AND the CLI tool (vignemale_cli) in the same wheel.
 python-packages = ["vignemale", "vignemale_cli"]
 module-name = "vignemale._core"
 features = ["pyo3/extension-module"]

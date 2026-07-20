@@ -1,4 +1,4 @@
-"""SDK API de Vignemale : le décorateur `@api` (typé Pydantic) + `serve()`.
+"""Vignemale's API SDK: the `@api` decorator (Pydantic-typed) + `serve()`.
 
     from pydantic import BaseModel
     from vignemale.api import api, serve
@@ -7,20 +7,21 @@
         prompt: str
 
     @api(method="POST", path="/chat")
-    def chat(body: ChatRequest) -> ChatReply:    # validé au runtime + extrait en statique
+    def chat(body: ChatRequest) -> ChatReply:    # validated at runtime + extracted statically
         ...
 
     serve("127.0.0.1:8080")
 
-Un handler reçoit ce que sa signature déclare : les paramètres de chemin
-(`/notes/:id` → `id`), `body` (JSON parsé / modèle Pydantic), `query` (dict des
-paramètres de query string) et `headers` (dict, noms en minuscules).
+A handler receives what its signature declares: the path parameters
+(`/notes/:id` → `id`), `body` (parsed JSON / Pydantic model), `query` (dict of
+query string parameters) and `headers` (dict, lowercase names).
 
-Les erreurs suivent le contrat Encore : corps `{code, message, details}`, codes
-gRPC-style mappés sur les statuts HTTP (cf. `APIError`).
+Errors follow the Encore contract: `{code, message, details}` body,
+gRPC-style codes mapped onto HTTP statuses (see `APIError`).
 """
 
 import contextvars
+import errno
 import functools
 import inspect
 import json
@@ -29,23 +30,23 @@ from typing import Callable, get_type_hints
 
 from . import _core
 
-# Registre des endpoints déclarés (rempli par le décorateur à l'import de l'app).
+# Registry of declared endpoints (filled by the decorator when the app is imported).
 _endpoints: list = []
 
-# Registre des dossiers statiques déclarés (servis par le core Rust).
+# Registry of declared static directories (served by the Rust core).
 _static_routes: list = []
 
 
 def static_files(*, path: str, dir: str, spa: bool = False, not_found: str = None) -> None:
-    """Sert un dossier de fichiers statiques **depuis le core Rust** — zéro
-    code Python exécuté par requête (miroir d'`api.static` d'Encore).
+    """Serves a directory of static files **from the Rust core** — zero
+    Python code executed per request (mirror of Encore's `api.static`).
 
         static_files(path="/assets", dir="./public")     # /assets/logo.png …
-        static_files(path="/", dir="./out", spa=True)    # front en fallback :
-        # toute route inconnue de l'API renvoie index.html (routing client —
+        static_files(path="/", dir="./out", spa=True)    # frontend as fallback:
+        # any route unknown to the API returns index.html (client-side routing —
         # Next.js `output: 'export'`, Vite, React Router…)
 
-    Les chemins relatifs sont résolus par rapport au fichier qui déclare.
+    Relative paths are resolved against the declaring file.
     """
     import inspect as _inspect
 
@@ -63,13 +64,13 @@ def static_files(*, path: str, dir: str, spa: bool = False, not_found: str = Non
         (path.rstrip("/") or "/", directory, nf and resolve(nf), fallback)
     )
 
-# Contexte de la requête en cours (posé par le wrapper, lu par `call()` pour
-# propager trace et auth aux appels service-à-service).
+# Context of the in-flight request (set by the wrapper, read by `call()` to
+# propagate trace and auth to service-to-service calls).
 _request_ctx: contextvars.ContextVar = contextvars.ContextVar(
     "vignemale_request_ctx", default=None
 )
 
-# Codes d'erreur (façon Encore / gRPC) → statut HTTP.
+# Error codes (Encore / gRPC style) → HTTP status.
 _CODE_TO_STATUS = {
     "canceled": 499,
     "unknown": 500,
@@ -104,17 +105,17 @@ _STATUS_TO_CODE = {
 
 
 class APIError(Exception):
-    """Erreur API au contrat Encore : `{code, message, details}` + statut HTTP.
+    """API error following the Encore contract: `{code, message, details}` + HTTP status.
 
-        raise APIError("not_found", "note introuvable")
-        raise APIError.not_found("note introuvable")          # raccourci
-        raise APIError.permission_denied("réservé à l'admin", details={"role": role})
+        raise APIError("not_found", "note not found")
+        raise APIError.not_found("note not found")            # shortcut
+        raise APIError.permission_denied("admin only", details={"role": role})
     """
 
     def __init__(self, code: str, message: str, details=None):
         status = _CODE_TO_STATUS.get(code)
         if status is None:
-            raise ValueError(f"code d'erreur API inconnu: {code!r}")
+            raise ValueError(f"unknown API error code: {code!r}")
         self.code = code
         self.vignemale_status = status
         self.vignemale_body = json.dumps(
@@ -128,7 +129,7 @@ def _add_shortcut(code: str) -> None:
         return cls(code, message, details)
 
     shortcut.__name__ = code
-    shortcut.__doc__ = f"Raccourci pour APIError({code!r}, …)."
+    shortcut.__doc__ = f"Shortcut for APIError({code!r}, …)."
     setattr(APIError, code, classmethod(shortcut))
 
 
@@ -137,10 +138,10 @@ for _code in _CODE_TO_STATUS:
 
 
 class HTTPError(APIError):
-    """Erreur par statut HTTP — sucre au-dessus d'`APIError` :
+    """Error by HTTP status — sugar on top of `APIError`:
 
-        raise HTTPError(404, "introuvable")
-        # ≡ APIError("not_found", "introuvable")
+        raise HTTPError(404, "not found")
+        # ≡ APIError("not_found", "not found")
     """
 
     def __init__(self, status: int, detail=None):
@@ -152,11 +153,11 @@ class HTTPError(APIError):
         else:
             message, details = f"HTTP {status}", detail
         super().__init__(code, message, details)
-        self.vignemale_status = int(status)  # le statut demandé prime sur le code
+        self.vignemale_status = int(status)  # the requested status wins over the code
 
 
 def _pydantic_model(tp):
-    """Renvoie `tp` si c'est un modèle Pydantic, sinon None."""
+    """Returns `tp` if it is a Pydantic model, None otherwise."""
     try:
         from pydantic import BaseModel
 
@@ -166,7 +167,7 @@ def _pydantic_model(tp):
 
 
 def _to_jsonable(v):
-    """Sérialise récursivement (modèles Pydantic imbriqués compris)."""
+    """Serializes recursively (nested Pydantic models included)."""
     if _pydantic_model(type(v)) is not None:
         return v.model_dump()
     if isinstance(v, dict):
@@ -176,20 +177,20 @@ def _to_jsonable(v):
     return v
 
 
-# --- authentification (façon Encore : UN auth handler par app) ---
+# --- authentication (Encore style: ONE auth handler per app) ---
 
 _auth_handler = None
-_auth_required: list = []  # noms des endpoints protégés (validation au serve)
+_auth_required: list = []  # names of protected endpoints (validated at serve)
 
 
 def auth_handler(func: Callable) -> Callable:
-    """Déclare LE handler d'authentification de l'app (un seul).
+    """Declares THE app's authentication handler (only one).
 
-    Reçoit le token (`Authorization: Bearer …`, ou `?token=` pour les clients
-    qui ne peuvent pas poser d'en-tête, ex. EventSource). Renvoie les données
-    d'auth (dict ou modèle Pydantic) si le token est valide, `None` sinon
-    (→ 401 `unauthenticated`). Les endpoints `@api(..., auth=True)` reçoivent
-    ces données dans le paramètre `auth` s'ils le déclarent.
+    Receives the token (`Authorization: Bearer …`, or `?token=` for clients
+    that cannot set a header, e.g. EventSource). Returns the auth data (dict
+    or Pydantic model) if the token is valid, `None` otherwise
+    (→ 401 `unauthenticated`). Endpoints `@api(..., auth=True)` receive this
+    data in the `auth` parameter if they declare it.
 
         @auth_handler
         def check(token):
@@ -198,7 +199,7 @@ def auth_handler(func: Callable) -> Callable:
     """
     global _auth_handler
     if _auth_handler is not None:
-        raise RuntimeError("un auth_handler est déjà déclaré (un seul par app)")
+        raise RuntimeError("an auth_handler is already declared (only one per app)")
     _auth_handler = func
     return func
 
@@ -213,23 +214,24 @@ def api(
     timeout: float = None,
     body_limit: int = None,
 ) -> Callable:
-    """Déclare une fonction comme endpoint HTTP.
+    """Declares a function as an HTTP endpoint.
 
-    - Si le paramètre `body` est annoté avec un modèle Pydantic, la requête est
-      **validée** (et coercée) avant l'appel du handler (sinon → 400
-      `invalid_argument` avec le détail Pydantic).
-    - Si le retour est un modèle Pydantic, il est sérialisé automatiquement.
-    - `stream=True` : le handler reçoit `stream` et pousse des fragments (SSE).
-    - `auth=True` : la requête passe d'abord par le `@auth_handler` de l'app
-      (sinon → 401 `unauthenticated`) ; le handler reçoit `auth` s'il le déclare.
-    - `expose=False` (PRIVATE) : l'endpoint n'est PAS exposé publiquement — il
-      n'est joignable qu'en service-à-service via `call()` (route interne signée).
-      Un appel externe reçoit 404. Défaut : exposé (`True`).
-    - `timeout` (secondes) : au-delà → 504 `deadline_exceeded` (le handler
-      finit en arrière-plan, ses logs sont conservés). Défaut :
-      `VIGNEMALE_REQUEST_TIMEOUT` (30 s ; 0 = désactivé). Ignoré en streaming.
-    - `body_limit` (octets) : au-delà → 413 `resource_exhausted`. Défaut :
-      `VIGNEMALE_MAX_BODY` (10 Mio).
+    - If the `body` parameter is annotated with a Pydantic model, the request
+      is **validated** (and coerced) before the handler is called (otherwise
+      → 400 `invalid_argument` with the Pydantic detail).
+    - If the return value is a Pydantic model, it is serialized automatically.
+    - `stream=True`: the handler receives `stream` and pushes fragments (SSE).
+    - `auth=True`: the request first goes through the app's `@auth_handler`
+      (otherwise → 401 `unauthenticated`); the handler receives `auth` if it
+      declares it.
+    - `expose=False` (PRIVATE): the endpoint is NOT exposed publicly — it is
+      only reachable service-to-service via `call()` (signed internal route).
+      An external call gets a 404. Default: exposed (`True`).
+    - `timeout` (seconds): beyond it → 504 `deadline_exceeded` (the handler
+      finishes in the background, its logs are kept). Default:
+      `VIGNEMALE_REQUEST_TIMEOUT` (30 s; 0 = disabled). Ignored when streaming.
+    - `body_limit` (bytes): beyond it → 413 `resource_exhausted`. Default:
+      `VIGNEMALE_MAX_BODY` (10 MiB).
     """
 
     def decorator(func: Callable) -> Callable:
@@ -251,19 +253,19 @@ def api(
 
         @functools.wraps(func)
         def wrapper(**kwargs):
-            # contexte de requête (trace + auth), AVANT le filtrage — `call()`
-            # s'en sert pour propager aux appels service-à-service
+            # request context (trace + auth), BEFORE the filtering — `call()`
+            # uses it to propagate to service-to-service calls
             ctx = {
                 "traceparent": (kwargs.get("headers") or {}).get("traceparent"),
                 "auth": kwargs.get("auth"),
             }
-            # le runtime fournit tout (params, query, headers, body, auth) ;
-            # on ne transmet que ce que la signature du handler déclare.
-            # L'authentification elle-même est jouée par le CORE, avant l'appel.
+            # the runtime provides everything (params, query, headers, body, auth);
+            # we only pass on what the handler's signature declares.
+            # Authentication itself is performed by the CORE, before the call.
             if not accepts_var_kwargs:
                 kwargs = {k: v for k, v in kwargs.items() if k in accepted}
             if body_required and "body" not in kwargs:
-                raise APIError("invalid_argument", "corps de requête requis")
+                raise APIError("invalid_argument", "request body required")
             if body_model is not None and "body" in kwargs:
                 from pydantic import ValidationError
 
@@ -272,7 +274,7 @@ def api(
                 except ValidationError as e:
                     raise APIError(
                         "invalid_argument",
-                        "requête invalide",
+                        "invalid request",
                         details=json.loads(e.json()),
                     ) from None
             ctx_token = _request_ctx.set(ctx)
@@ -287,13 +289,13 @@ def api(
         _endpoints.append(
             (func.__name__, method.upper(), path, wrapper, stream, auth, timeout, body_limit, expose)
         )
-        return func  # on renvoie la fonction typée d'origine (pour pyright)
+        return func  # we return the original typed function (for pyright)
 
     return decorator
 
 
 def _auth_adapter(token: str):
-    """Normalise le retour de l'auth handler avant le passage au core."""
+    """Normalizes the auth handler's return value before handing it to the core."""
     data = _auth_handler(token)
     if data is not None and _pydantic_model(type(data)) is not None:
         data = data.model_dump()
@@ -301,12 +303,12 @@ def _auth_adapter(token: str):
 
 
 def _gateway_routes() -> list:
-    """Construit les routes de la gateway depuis les endpoints chargés + les URLs
-    des services (VIGNEMALE_SERVICE_<NOM>, posées par le deploy à la découverte).
+    """Builds the gateway routes from the loaded endpoints + the services'
+    URLs (VIGNEMALE_SERVICE_<NAME>, set by the deploy at discovery time).
 
-    Renvoie une liste de (prefix, service, upstream_url, requires_auth). Le préfixe
-    est la partie statique du path (jusqu'au 1er segment de paramètre). Les
-    endpoints privés (expose=False) ne sont jamais routés publiquement.
+    Returns a list of (prefix, service, upstream_url, requires_auth). The prefix
+    is the static part of the path (up to the 1st parameter segment). Private
+    endpoints (expose=False) are never routed publicly.
     """
     from .service import _services
 
@@ -324,45 +326,89 @@ def _gateway_routes() -> list:
             segs.append(seg)
         return "/" + "/".join(segs)
 
-    # (prefix, service, url) → requires_auth (OR des endpoints sous ce préfixe)
+    # (prefix, service, url) → requires_auth (OR of the endpoints under this prefix)
     routes: dict = {}
     for name, method, path, wrapper, stream, auth, timeout, body_limit, expose in _endpoints:
         if not expose:
-            continue  # privé : jamais exposé via la gateway
+            continue  # private: never exposed via the gateway
         svc = service_of(wrapper.__module__)
         if svc is None:
             continue
         url = os.environ.get("VIGNEMALE_SERVICE_" + svc.upper().replace("-", "_"))
         if not url:
-            continue  # URL du service inconnue → non routable
+            continue  # service URL unknown → not routable
         key = (static_prefix(path), svc, url)
         routes[key] = routes.get(key, False) or bool(auth)
     return [(pref, svc, url, req) for (pref, svc, url), req in routes.items()]
 
 
-def serve_gateway(routes: list, addr: str = "127.0.0.1:8080", reuse_port: bool = False) -> None:
-    """Démarre la GATEWAY : l'entrée unique d'une app multi-services déployée.
+def _port_in_use_error(addr: str) -> SystemExit:
+    host, _, port = addr.rpartition(":")
+    return SystemExit(
+        f"vignemale: {addr} is already in use — another process is listening on "
+        f"this port.\n"
+        f"  Find it with:       lsof -nP -iTCP:{port} -sTCP:LISTEN\n"
+        f"  Or pick another:    --addr {host}:{int(port) + 1 if port.isdigit() else '<port>'}"
+    )
 
-    `routes` : liste de (prefix, service, upstream_url, requires_auth). Le
-    trafic public est authentifié à l'edge (via le `@auth_handler` chargé) puis
-    forwardé en HTTP signé (svcauth) vers le bon service. Utilisé par
-    `vignemale gateway` ; le secret partagé vient de VIGNEMALE_SERVICE_SECRET.
+
+def _check_port_free(addr: str, reuse_port: bool) -> None:
+    """Fail fast, with a clear error, if the address is already taken.
+
+    The core binds on a background thread, *after* the startup banner has been
+    printed — without this check a busy port surfaces as a raw RuntimeError
+    right below a banner claiming the server is up.
     """
-    print(f"vignemale: gateway sur http://{addr} ({len(routes)} service(s))", flush=True)
+    import socket
+
+    host, _, port_s = addr.rpartition(":")
+    try:
+        port = int(port_s)
+    except ValueError:
+        return  # unusual address format: let the core report it
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        if reuse_port and hasattr(socket, "SO_REUSEPORT"):
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        probe.bind((host, port))
+    except OSError as exc:
+        if exc.errno == errno.EADDRINUSE:
+            raise _port_in_use_error(addr) from None
+        return  # other bind errors (bad host, perms…): let the core report them
+    finally:
+        probe.close()
+
+
+def serve_gateway(routes: list, addr: str = "127.0.0.1:8080", reuse_port: bool = False) -> None:
+    """Starts the GATEWAY: the single entry point of a deployed multi-service app.
+
+    `routes`: list of (prefix, service, upstream_url, requires_auth). Public
+    traffic is authenticated at the edge (via the loaded `@auth_handler`) then
+    forwarded as signed HTTP (svcauth) to the right service. Used by
+    `vignemale gateway`; the shared secret comes from VIGNEMALE_SERVICE_SECRET.
+    """
+    _check_port_free(addr, reuse_port)
+    print(f"vignemale: gateway on http://{addr} ({len(routes)} service(s))", flush=True)
     try:
         _core.serve_gateway(
             routes, addr, _auth_adapter if _auth_handler is not None else None, reuse_port
         )
     except KeyboardInterrupt:
-        print("vignemale: gateway arrêtée", flush=True)
+        print("vignemale: gateway stopped", flush=True)
+    except RuntimeError as exc:
+        if "address already in use" in str(exc).lower():
+            raise _port_in_use_error(addr) from None
+        raise
 
 
 def _endpoints_to_serve() -> list:
-    """Endpoints à servir par CE conteneur.
+    """Endpoints to be served by THIS container.
 
-    Topologie « un conteneur par service » : le deploy pose `VIGNEMALE_SERVICE_NAME`
-    → on ne sert QUE les endpoints de ce service (les autres restent joignables via
-    `call()` HTTP vers leur conteneur). Sans cette variable (mono) → tout est servi.
+    "One container per service" topology: the deploy sets `VIGNEMALE_SERVICE_NAME`
+    → we ONLY serve this service's endpoints (the others remain reachable via
+    `call()` HTTP to their container). Without this variable (mono) → everything
+    is served.
     """
     svc = os.environ.get("VIGNEMALE_SERVICE_NAME")
     if not svc:
@@ -371,11 +417,11 @@ def _endpoints_to_serve() -> list:
 
     modules = [m for (n, m) in _services if n == svc]
     if not modules:
-        # nom de service inconnu (mauvaise config) : on sert tout plutôt qu'un
-        # conteneur vide, en le signalant.
+        # unknown service name (bad config): we serve everything rather than an
+        # empty container, while flagging it.
         print(
-            f"vignemale: VIGNEMALE_SERVICE_NAME={svc!r} ne correspond à aucun "
-            "Service() déclaré — tous les endpoints sont servis.",
+            f"vignemale: VIGNEMALE_SERVICE_NAME={svc!r} does not match any "
+            "declared Service() — all endpoints are served.",
             flush=True,
         )
         return list(_endpoints)
@@ -387,33 +433,34 @@ def _endpoints_to_serve() -> list:
 
 
 def serve(addr: str = "127.0.0.1:8080", reuse_port: bool = False) -> None:
-    """Démarre le serveur HTTP.
+    """Starts the HTTP server.
 
-    S'arrête **gracieusement** sur Ctrl-C ou SIGTERM (containers) : healthz
-    passe à 503 `shutting_down`, plus aucune connexion acceptée, les requêtes
-    en vol terminent (borné par `VIGNEMALE_SHUTDOWN_TIMEOUT`, 10 s).
+    Stops **gracefully** on Ctrl-C or SIGTERM (containers): healthz switches
+    to 503 `shutting_down`, no more connections are accepted, in-flight
+    requests finish (bounded by `VIGNEMALE_SHUTDOWN_TIMEOUT`, 10 s).
     """
     endpoints = _endpoints_to_serve()
-    # validation de l'auth restreinte aux endpoints réellement servis (e[5] = auth)
+    # auth validation restricted to the endpoints actually served (e[5] = auth)
     protected = [e[0] for e in endpoints if e[5]]
     if protected and _auth_handler is None:
         raise SystemExit(
-            "vignemale: endpoint(s) protégé(s) sans @auth_handler déclaré : "
+            "vignemale: protected endpoint(s) without a declared @auth_handler: "
             + ", ".join(protected)
         )
     import signal as _signal
 
     def _sigterm(*_args):
-        raise KeyboardInterrupt  # même chemin d'arrêt gracieux que Ctrl-C
+        raise KeyboardInterrupt  # same graceful shutdown path as Ctrl-C
 
     try:
         _signal.signal(_signal.SIGTERM, _sigterm)
     except ValueError:
-        pass  # pas dans le thread principal (tests…) : tant pis pour SIGTERM
+        pass  # not in the main thread (tests…): no SIGTERM handling then
 
+    _check_port_free(addr, reuse_port)
     svc = os.environ.get("VIGNEMALE_SERVICE_NAME")
-    suffix = f" (service « {svc} »)" if svc else ""
-    print(f"vignemale: {len(endpoints)} endpoint(s) sur http://{addr}{suffix}", flush=True)
+    suffix = f' (service "{svc}")' if svc else ""
+    print(f"vignemale: {len(endpoints)} endpoint(s) on http://{addr}{suffix}", flush=True)
     try:
         _core.serve(
             endpoints,
@@ -423,4 +470,8 @@ def serve(addr: str = "127.0.0.1:8080", reuse_port: bool = False) -> None:
             reuse_port,
         )
     except KeyboardInterrupt:
-        print("vignemale: arrêté", flush=True)
+        print("vignemale: stopped", flush=True)
+    except RuntimeError as exc:
+        if "address already in use" in str(exc).lower():
+            raise _port_in_use_error(addr) from None
+        raise

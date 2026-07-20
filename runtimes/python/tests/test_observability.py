@@ -1,4 +1,4 @@
-"""Observabilité : logs JSON par requête, request-id, erreurs avec traceback."""
+"""Observability: JSON logs per request, request-id, errors with traceback."""
 
 import json
 import os
@@ -12,7 +12,7 @@ from conftest import HERE, Server, free_port, request
 
 @pytest.fixture()
 def hello():
-    """Serveur app_hello avec stderr capturé (les logs y vont)."""
+    """app_hello server with stderr captured (that's where the logs go)."""
     addr = f"127.0.0.1:{free_port()}"
     env = dict(os.environ, VIGNEMALE_ADDR=addr)
     srv = Server(
@@ -30,14 +30,14 @@ def logs_of(srv) -> list:
         try:
             out.append(json.loads(line))
         except json.JSONDecodeError:
-            pass  # lignes non-JSON éventuelles (warnings python, etc.)
+            pass  # possible non-JSON lines (python warnings, etc.)
     return out
 
 
 def test_request_id_header_and_log_line(hello):
     with urllib.request.urlopen(f"http://{hello.addr}/hello", timeout=5) as r:
         rid = r.headers["x-vignemale-request-id"]
-    assert rid, "chaque réponse doit porter x-vignemale-request-id"
+    assert rid, "every response must carry x-vignemale-request-id"
 
     logs = logs_of(hello)
     (line,) = [l for l in logs if l.get("request_id") == rid]
@@ -50,7 +50,7 @@ def test_request_id_header_and_log_line(hello):
 
 def test_startup_log(hello):
     logs = logs_of(hello)
-    (line,) = [l for l in logs if l.get("message") == "serveur démarré"]
+    (line,) = [l for l in logs if l.get("message") == "server started"]
     assert line["endpoints"] == 10
 
 
@@ -61,7 +61,7 @@ def test_unhandled_exception_500_with_request_id(hello):
     rid = body["details"]["request_id"]
 
     logs = logs_of(hello)
-    # deux lignes ERROR corrélées par le request_id : le traceback (app)…
+    # two ERROR lines correlated by request_id: the traceback (app)…
     (err,) = [
         l
         for l in logs
@@ -69,8 +69,8 @@ def test_unhandled_exception_500_with_request_id(hello):
         and l.get("request_id") == rid
         and l.get("target") == "vignemale::app"
     ]
-    assert "ValueError: explosion contrôlée" in err["traceback"]
-    # …et la ligne de requête (api) en statut 500
+    assert "ValueError: controlled explosion" in err["traceback"]
+    # …and the request line (api) with status 500
     (req_line,) = [
         l for l in logs if l.get("endpoint") == "boom" and l.get("request_id") == rid
     ]
@@ -79,7 +79,7 @@ def test_unhandled_exception_500_with_request_id(hello):
 
 
 def test_http_error_is_not_a_500_log(hello):
-    # un HTTPError volontaire (4xx) ne doit pas générer de log ERROR
+    # a deliberate HTTPError (4xx) must not generate an ERROR log
     status, _ = request(hello.addr, "/greet/Jacques")
     assert status == 200
     logs = logs_of(hello)
@@ -89,12 +89,12 @@ def test_http_error_is_not_a_500_log(hello):
 def test_python_log_api(capfd):
     from vignemale import log
 
-    log.info("commande créée", order_id=42)
-    log.debug("invisible au niveau info")
+    log.info("order created", order_id=42)
+    log.debug("invisible at info level")
     out = capfd.readouterr().err.strip().splitlines()
     (line,) = [json.loads(l) for l in out]
     assert line["level"] == "INFO"
-    assert line["message"] == "commande créée"
+    assert line["message"] == "order created"
     assert line["order_id"] == 42
     assert line["target"] == "vignemale::app"
     assert "timestamp" in line

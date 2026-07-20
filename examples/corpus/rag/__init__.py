@@ -1,4 +1,4 @@
-"""Service `rag` — recherche et réponse, sur les documents AUTORISÉS."""
+"""Service `rag` — search and answer, over the AUTHORIZED documents."""
 
 from vignemale import Service
 

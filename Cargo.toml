@@ -1,17 +1,17 @@
-# Vignemale — Infrastructure from Code pour agents IA (structure miroir d'Encore).
-# Le cœur = runtimes/core (Rust), à PORTER depuis encore/runtimes/core.
+# Vignemale — Infrastructure from Code for AI agents (structure mirroring Encore).
+# The core = runtimes/core (Rust), to be PORTED from encore/runtimes/core.
 [workspace]
 resolver = "2"
 members = ["runtimes/core", "runtimes/python"]
-# `cargo build` (sans args) ne build que le core ; le binding Python se build via maturin.
+# `cargo build` (no args) only builds the core; the Python binding is built via maturin.
 default-members = ["runtimes/core"]
 
-# Profil release optimisé pour la PROD (l'image Docker via `maturin build --release`).
-# strip : retire les symboles de debug du .so (≈31 Mo → ≈10 Mo) ; lto + 1 unité de
-# codegen : binaire plus petit ET plus rapide (élimine le code mort entre crates).
-# On NE touche PAS opt-level (reste 3) ni panic (reste unwind, requis par PyO3 pour
-# convertir un panic Rust en exception Python). `maturin develop` (dev) reste en
-# debug, donc zéro impact sur l'itération locale.
+# Release profile optimized for PROD (the Docker image via `maturin build --release`).
+# strip: removes the debug symbols from the .so (~31 MB -> ~10 MB); lto + 1 codegen
+# unit: smaller AND faster binary (eliminates dead code across crates).
+# We do NOT touch opt-level (stays 3) nor panic (stays unwind, required by PyO3 to
+# convert a Rust panic into a Python exception). `maturin develop` (dev) stays in
+# debug, so zero impact on local iteration.
 [profile.release]
 strip = true
 lto = "fat"

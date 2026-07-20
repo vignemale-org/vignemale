@@ -1,7 +1,7 @@
-"""Vignemale — SDK Python (binding du cœur Rust).
+"""Vignemale — Python SDK (binding of the Rust core).
 
-Déploie tes agents IA en production sur Scaleway, depuis Python.
-Pour l'instant : expose le chargement de config du core (testable au fil de l'eau).
+Deploy your AI agents to production on Scaleway, from Python.
+For now: exposes the core's config loading (testable as we go).
 """
 
 from vignemale._core import (

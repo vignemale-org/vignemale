@@ -1,17 +1,17 @@
-//! `sqldb` — Postgres : pool, requêtes, **transactions**, **TLS**, types riches.
+//! `sqldb` — Postgres: pool, queries, **transactions**, **TLS**, rich types.
 //!
-//! Porté du module `sqldb` d'Encore (même découpage : `manager` / `client` /
-//! `transaction` / `val`, MPL — cf. proto/ATTRIBUTION.md), adapté à notre
-//! pont JSON : le binding passe des paramètres JSON, on renvoie les lignes
-//! en JSON.
+//! Ported from Encore's `sqldb` module (same layout: `manager` / `client` /
+//! `transaction` / `val`, MPL — cf. proto/ATTRIBUTION.md), adapted to our
+//! JSON bridge: the binding passes JSON parameters, we return the rows
+//! as JSON.
 //!
-//! - `manager` — pools par DSN, TLS (CA custom via `VIGNEMALE_SQLDB_CA_CERT`,
-//!   le cas Scaleway Managed Database), config du pool ;
-//! - `client`  — query/execute tracées (durée, requête tronquée, erreurs) ;
-//! - `transaction` — begin/commit/rollback **sans lifetime** (façon Encore,
-//!   pour traverser le binding) ;
-//! - `val`     — conversion des valeurs : JSON → bind Postgres adapté au type
-//!   de la colonne, et lignes → JSON typé (numeric en string, bytea en
+//! - `manager` — pools per DSN, TLS (custom CA via `VIGNEMALE_SQLDB_CA_CERT`,
+//!   the Scaleway Managed Database case), pool configuration;
+//! - `client`  — traced query/execute (duration, truncated query, errors);
+//! - `transaction` — begin/commit/rollback **without a lifetime** (Encore-style,
+//!   to cross the binding);
+//! - `val`     — value conversion: JSON -> Postgres bind adapted to the column's
+//!   type, and rows -> typed JSON (numeric as string, bytea as
 //!   base64, arrays, time/date/uuid…).
 
 mod client;

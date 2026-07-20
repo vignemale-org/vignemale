@@ -1,260 +1,261 @@
-# Vignemale Cloud — architecture du control plane
+# Vignemale Cloud — control plane architecture
 
-> État au 15 juin 2026 : le chemin de déploiement est **prouvé en prod**
-> (`vignemale deploy` → app + base serverless live sur Scaleway), mais piloté
-> depuis le laptop = **PoC**. Ce document décrit le **control plane** (le serveur
-> qui fait de Vignemale une plateforme) et le chemin PoC → prod.
+> Status as of June 15, 2026: the deployment path is **proven in prod**
+> (`vignemale deploy` → app + serverless database live on Scaleway), but driven
+> from the laptop = **PoC**. This document describes the **control plane** (the
+> server that turns Vignemale into a platform) and the PoC → prod path.
 
-## 1. Du PoC au produit — ce qui doit changer
+## 1. From PoC to product — what has to change
 
-| Aspect | PoC actuel | Cible |
+| Aspect | Current PoC | Target |
 |---|---|---|
-| Langage moteur/serveur | Python (`vignemale-deploy`) | **Go** (type-safe, `scaleway-sdk-go` de référence) |
-| Orchestration | sur le laptop (CLI) | **serveur** (control plane), CLI = client mince |
-| Build de l'image | manuel sur le laptop (`--from-source` émulé) | **server-side** (push le code → la plateforme build + déploie) |
-| État | fichier JSON local | **Postgres** = source de vérité (apps, envs, ressources, deploys) |
-| Creds cloud / secrets | variables d'env du shell | **chiffrés** dans le control plane, injectés au deploy |
-| Migrations | chargement de l'app en local | **job dans le compte client** (Serverless Job Go SDK) avec l'image de l'app |
-| Reconcile | `ensure_*` best-effort | **diff désiré/réel, lock, rollback, retries** |
-| Identité / équipe / billing | inexistants | **login, orgs/RBAC, audit, metering** |
-| Gouvernance | deploy = immédiat | **approbation devops SYSTÉMATIQUE** (panel web Vignemale) : plan revu + validé avant tout apply ; mail au dev |
-| Déclencheur deploy | CLI manuel | `vignemale deploy` **ou** `git push vignemale` |
+| Engine/server language | Python (`vignemale-deploy`) | **Go** (type-safe, `scaleway-sdk-go` as the reference SDK) |
+| Orchestration | on the laptop (CLI) | **server** (control plane), CLI = thin client |
+| Image build | manual on the laptop (emulated `--from-source`) | **server-side** (push the code → the platform builds + deploys) |
+| State | local JSON file | **Postgres** = source of truth (apps, envs, resources, deploys) |
+| Cloud creds / secrets | shell env variables | **encrypted** in the control plane, injected at deploy time |
+| Migrations | loading the app locally | **job in the customer's account** (Serverless Job, Go SDK) with the app's image |
+| Reconcile | best-effort `ensure_*` | **desired/actual diff, lock, rollback, retries** |
+| Identity / team / billing | nonexistent | **login, orgs/RBAC, audit, metering** |
+| Governance | deploy = immediate | **SYSTEMATIC devops approval** (Vignemale web panel): plan reviewed + validated before any apply; email to the dev |
+| Deploy trigger | manual CLI | `vignemale deploy` **or** `git push vignemale` |
 
-**Décision (15 juin 2026) : le moteur de déploiement et le control plane sont en
-Go.** Le `vignemale-deploy` Python qu'on a écrit était le **PoC qui a dérisqué le
-flux en prod réelle** (appels SDK, format DSN serverless, mapping ressources,
-migrations) — ce savoir se transpose tel quel en Go. Le SDK Go couvre tous nos
-produits (`serverless_sqldb`, `container`, `rdb`, `secret`, `registry`, `iam`,
+**Decision (June 15, 2026): the deployment engine and the control plane are in
+Go.** The Python `vignemale-deploy` we wrote was the **PoC that de-risked the
+flow in real production** (SDK calls, serverless DSN format, resource mapping,
+migrations) — that knowledge transposes as-is to Go. The Go SDK covers all our
+products (`serverless_sqldb`, `container`, `rdb`, `secret`, `registry`, `iam`,
 `jobs`, `cockpit`, `billing`).
 
-**La frontière Python/Go** : `collect` (extraction du `meta`) parse du Python
-(griffe) → **reste en Python**, mais s'exécute **dans l'étape de build** (qui a de
-toute façon le source + Python) et **émet le `meta` comme artefact**. Le control
-plane Go ne consomme que le `meta` (proto, déjà language-agnostique) + l'image →
-**Go ne touche jamais à Python.**
+**The Python/Go boundary**: `collect` (extraction of the `meta`) parses Python
+(griffe) → **stays in Python**, but runs **inside the build step** (which has the
+source + Python anyway) and **emits the `meta` as an artifact**. The Go control
+plane only consumes the `meta` (proto, already language-agnostic) + the image →
+**Go never touches Python.**
 
-## 2. Vue d'ensemble
+## 2. Overview
 
 ```
-  Dev / CI                 Control plane Vignemale Cloud (Go)        Compte Scaleway DU CLIENT
+  Dev / CI                 Vignemale Cloud control plane (Go)         CUSTOMER's Scaleway account
  ┌─────────┐  push code  ┌────────────────────────────────────┐    ┌────────────────────────┐
- │ vignemale│  + token   │  API (Go) ──► Postgres (état)        │SDK │  Serverless Container  │
- │   CLI    │───────────►│   │           + file jobs SKIP LOCKED │ Go │  Serverless SQL DB     │
+ │ vignemale│  + token   │  API (Go) ──► Postgres (state)       │SDK │  Serverless Container  │
+ │   CLI    │───────────►│   │           + job queue SKIP LOCKED │ Go │  Serverless SQL DB     │
  │ (login,  │   SSE      │   ├─► BUILD worker (Python collect    │───►│  Object Storage        │
  │  deploy) │◄───────────│   │     + BuildKit) → image + meta    │creds│  Container Registry    │
- └─────────┘  (logs)     │   └─► DEPLOY worker (Go) ─► reconcile │délég.  Serverless Job (migrations)
-                         │  Secrets/creds chiffrés · RBAC        │    └────────────────────────┘
+ └─────────┘  (logs)     │   └─► DEPLOY worker (Go) ─► reconcile │deleg.  Serverless Job (migrations)
+                         │  Encrypted secrets/creds · RBAC       │    └────────────────────────┘
                          └────────────────────────────────────┘
-         Panel admin web (NOTRE produit SaaS : approbation + gestion) ─────┘
+         Web admin panel (OUR SaaS product: approval + management) ─────┘
 ```
-Deux types de worker : **build** (a besoin de Python+griffe pour `collect` et de
-BuildKit pour l'image ; produit l'image + le `meta` + le plan) et **deploy** (Go
-pur : réconciliation Scaleway). Le `meta` (proto) est le contrat entre les deux.
+Two worker types: **build** (needs Python+griffe for `collect` and
+BuildKit for the image; produces the image + the `meta` + the plan) and **deploy** (pure
+Go: Scaleway reconciliation). The `meta` (proto) is the contract between the two.
 
-### 2.1 Le parcours (la vraie UX)
+### 2.1 The journey (the real UX)
 
-**Développeur :**
-1. `uv add vignemale` — installe la lib dans son app.
-2. `vignemale login` — s'authentifie et **rattache l'app à son projet entreprise**
-   (org/env). Au passage, **initialise le remote git `vignemale`**.
-3. `vignemale run` — développe en local (l'agent tourne, infra locale auto).
-4. Déploie : `vignemale deploy` **ou** `git push vignemale`.
+**Developer:**
+1. `uv add vignemale` — installs the lib in their app.
+2. `vignemale login` — authenticates and **attaches the app to their company project**
+   (org/env). Along the way, **initializes the `vignemale` git remote**.
+3. `vignemale run` — develops locally (the agent runs, local infra is automatic).
+4. Deploys: `vignemale deploy` **or** `git push vignemale`.
 
-**DevOps (panel admin) :**
-5. Reçoit une **notification** : « un dev a poussé sur le projet X ».
-6. Voit **exactement ce qui va être appliqué** : le diff des ressources + les
-   **paramètres configurés au niveau entreprise** (région, scaling, budget,
+**DevOps (admin panel):**
+5. Receives a **notification**: "a dev pushed to project X".
+6. Sees **exactly what will be applied**: the resource diff + the
+   **company-level configured parameters** (region, scaling, budget,
    secrets, quotas).
-7. **Accepte ou refuse.**
-8. À l'acceptation : déploiement → **mail au dev** (succès + URL, ou échec).
+7. **Accepts or refuses.**
+8. On acceptance: deployment → **email to the dev** (success + URL, or failure).
 
-C'est une **gate de gouvernance** : rien n'atterrit sur le cloud sans qu'un
-responsable ait vu et validé le plan. Différenciateur entreprise fort (contrôle
-+ visibilité + RGPD), et ça réutilise directement le **plan** du reconciler.
+This is a **governance gate**: nothing lands on the cloud without a
+responsible person having seen and validated the plan. A strong enterprise
+differentiator (control + visibility + GDPR), and it directly reuses the
+reconciler's **plan**.
 
-**Modèle (rappel, décidé)** : BYOC + control plane managé qui facture. On déploie
-**toujours dans le compte Scaleway du client** (clé IAM déléguée qu'il connecte) ;
-le control plane garde le contrôle (état, RBAC, secrets, audit) et facture le
-**service de plateforme**, pas la compute.
+**Model (reminder, decided)**: BYOC + a managed control plane that bills. We always
+deploy **into the customer's Scaleway account** (a delegated IAM key they connect);
+the control plane keeps control (state, RBAC, secrets, audit) and bills for the
+**platform service**, not the compute.
 
-## 3. Le control plane en détail
+## 3. The control plane in detail
 
-### 3.1 Responsabilités
-- Authentifier (users, orgs, tokens) et autoriser (**RBAC** : dev / devops / admin).
-- Détenir, **chiffrées**, les credentials cloud et les secrets applicatifs.
-- Recevoir un déclencheur (`vignemale deploy` ou `git push`), **builder**,
-  **calculer le plan**, puis le soumettre à la **gate d'approbation devops**.
-- Après approbation, exécuter le deploy de façon **asynchrone, idempotente,
-  reprenable**, **streamer** la progression, et **notifier** (mail dev).
-- Être la **source de vérité** : ce qui est déployé, où, dans quel état, avec
-  quel historique (rollback) et **quelle décision d'approbation** (audit).
-- Agréger l'observabilité ; mesurer l'usage (billing).
+### 3.1 Responsibilities
+- Authenticate (users, orgs, tokens) and authorize (**RBAC**: dev / devops / admin).
+- Hold the cloud credentials and application secrets, **encrypted**.
+- Receive a trigger (`vignemale deploy` or `git push`), **build**,
+  **compute the plan**, then submit it to the **devops approval gate**.
+- After approval, execute the deploy **asynchronously, idempotently,
+  resumably**, **stream** the progress, and **notify** (email to the dev).
+- Be the **source of truth**: what is deployed, where, in what state, with
+  what history (rollback) and **which approval decision** (audit).
+- Aggregate observability; measure usage (billing).
 
-### 3.2 Composants
-1. **API** (Go) — REST + SSE pour les logs ; scope par org/token.
-2. **Postgres** : l'état (cf. 3.4).
-3. **File de jobs** : `SELECT … FOR UPDATE SKIP LOCKED` sur une table `jobs`
-   (même primitive que la future `queue`). Un deploy = un build job puis un deploy job.
-4. **Build worker** : Python (collect/griffe) + BuildKit → image amd64 + `meta`.
-5. **Deploy worker** (Go) : dépile, exécute le **reconciler** (`scaleway-sdk-go`),
-   écrit la progression (steps) lue par l'API en SSE.
-6. **Secrets/creds** : chiffrement enveloppe (clé maître → clés data), déchiffrés
-   *juste-à-temps* par le worker pour l'injection container. Jamais exposés au CLI.
-7. **Panel admin** = **NOTRE produit web hébergé** (l'UI SaaS de Vignemale Cloud) :
-   le devops y reçoit les notifications, **review le plan + les params entreprise,
-   approuve/refuse**, et gère apps/envs/secrets/logs/membres. C'est la face visible
-   du control plane (le CLI ne fait que dev + déclencher).
+### 3.2 Components
+1. **API** (Go) — REST + SSE for logs; scoped per org/token.
+2. **Postgres**: the state (see 3.4).
+3. **Job queue**: `SELECT … FOR UPDATE SKIP LOCKED` on a `jobs` table
+   (same primitive as the future `queue`). One deploy = one build job then one deploy job.
+4. **Build worker**: Python (collect/griffe) + BuildKit → amd64 image + `meta`.
+5. **Deploy worker** (Go): dequeues, executes the **reconciler** (`scaleway-sdk-go`),
+   writes the progress (steps) read by the API over SSE.
+6. **Secrets/creds**: envelope encryption (master key → data keys), decrypted
+   *just-in-time* by the worker for container injection. Never exposed to the CLI.
+7. **Admin panel** = **OUR hosted web product** (the Vignemale Cloud SaaS UI):
+   this is where devops receives notifications, **reviews the plan + the company params,
+   approves/refuses**, and manages apps/envs/secrets/logs/members. It is the visible face
+   of the control plane (the CLI only does dev + triggering).
 
-### 3.3 Cycle de vie d'un deploy
+### 3.3 Lifecycle of a deploy
 
 ```
-DÉCLENCHEUR (au choix) :
-  vignemale deploy             → pousse le SOURCE au control plane
-  git push vignemale           → le remote « vignemale » (posé au login) reçoit le push
-        └─ control plane : deployments(status=queued) + enqueue BUILD job → {deploy_id}
+TRIGGER (either):
+  vignemale deploy             → pushes the SOURCE to the control plane
+  git push vignemale           → the "vignemale" remote (set at login) receives the push
+        └─ control plane: deployments(status=queued) + enqueue BUILD job → {deploy_id}
 
-BUILD worker (Python collect + BuildKit) :
-  b1. collect (griffe) → meta (proto)                      [extraction statique]
-  b2. docker build (amd64 natif) → push registre client → image_digest
-  b3. PLAN = reconcile(meta vs état+Scaleway, fusionné avec la CONFIG ENTREPRISE)
-            [diff create/update/delete + params org : région, scaling, budget, secrets]
-  b4. status = pending_approval → NOTIFIE le panel admin (le devops)
+BUILD worker (Python collect + BuildKit):
+  b1. collect (griffe) → meta (proto)                      [static extraction]
+  b2. docker build (native amd64) → push to customer registry → image_digest
+  b3. PLAN = reconcile(meta vs state+Scaleway, merged with the COMPANY CONFIG)
+            [create/update/delete diff + org params: region, scaling, budget, secrets]
+  b4. status = pending_approval → NOTIFIES the admin panel (the devops)
 
-GATE D'APPROBATION (humaine) :
-  le devops voit dans le panel : le diff exact + les paramètres entreprise appliqués
-  ├─ REJETÉ   → status=rejected, mail au dev (raison)
-  └─ APPROUVÉ → enqueue DEPLOY job
+APPROVAL GATE (human):
+  the devops sees in the panel: the exact diff + the applied company parameters
+  ├─ REJECTED → status=rejected, email to the dev (reason)
+  └─ APPROVED → enqueue DEPLOY job
 
-DEPLOY worker (Go) :
-  1. lock advisory sur (env_id)        ← un seul deploy concurrent par env
-  2. charge creds client (déchiffre) + état (table resources)
-  3. APPLY ressources (DB serverless, buckets, secrets)    [idempotent, IDs → table resources]
-  4. MIGRATE : Serverless Job dans le compte client, image de l'app, `vignemale migrate`
-  5. ROLLOUT container (nouvelle révision) → health check
-  6. bascule trafic → status=succeeded   (sinon ROLLBACK révision précédente, status=failed)
-  7. release lock ; steps écrits en continu (→ SSE panel) ; MAIL au dev (succès/échec + URL)
+DEPLOY worker (Go):
+  1. advisory lock on (env_id)         ← only one concurrent deploy per env
+  2. load customer creds (decrypt) + state (resources table)
+  3. APPLY resources (serverless DB, buckets, secrets)     [idempotent, IDs → resources table]
+  4. MIGRATE: Serverless Job in the customer account, app image, `vignemale migrate`
+  5. ROLLOUT container (new revision) → health check
+  6. switch traffic → status=succeeded   (otherwise ROLLBACK to previous revision, status=failed)
+  7. release lock; steps written continuously (→ panel SSE); EMAIL to the dev (success/failure + URL)
 ```
-Le **plan est calculé AVANT l'approbation** (fin du build) : c'est lui que le
-devops review. La **config entreprise** (région autorisée, scaling, budget,
-secrets, quotas) est définie au niveau org/env et **fusionnée** avec ce que l'app
-déclare — l'app exprime l'intention, l'org cadre. **L'approbation est SYSTÉMATIQUE**
-(décidé) : tout deploy, quel que soit l'env, passe par `pending_approval` — pas de
-bypass. C'est la garantie de gouvernance.
+The **plan is computed BEFORE approval** (at the end of the build): it is what the
+devops reviews. The **company config** (allowed region, scaling, budget,
+secrets, quotas) is defined at the org/env level and **merged** with what the app
+declares — the app expresses intent, the org sets the frame. **Approval is SYSTEMATIC**
+(decided): every deploy, whatever the env, goes through `pending_approval` — no
+bypass. That is the governance guarantee.
 
-### 3.4 Modèle de données (esquisse Postgres)
+### 3.4 Data model (Postgres sketch)
 ```
 orgs(id, name, plan)                       users(id, email)
 memberships(user_id, org_id, role)         api_tokens(id, org_id, hash, scopes)  -- role: dev | devops | admin
-cloud_credentials(id, org_id, provider, enc_blob, scopes)   -- clé IAM client chiffrée
-apps(id, org_id, name, git_repo)                            -- git_repo : remote « vignemale »
-environments(id, app_id, name, region, db_backend)          -- approbation systématique (pas de flag)
-env_config(env_id, key, value)            -- params ENTREPRISE : région, scaling, budget, quotas…
-secrets(id, env_id, name, enc_value, version)               -- chiffrés
-resources(id, env_id, kind, logical_name, provider_id, meta)-- registre des ressources Scaleway
+cloud_credentials(id, org_id, provider, enc_blob, scopes)   -- customer IAM key, encrypted
+apps(id, org_id, name, git_repo)                            -- git_repo: the "vignemale" remote
+environments(id, app_id, name, region, db_backend)          -- systematic approval (no flag)
+env_config(env_id, key, value)            -- COMPANY params: region, scaling, budget, quotas…
+secrets(id, env_id, name, enc_value, version)               -- encrypted
+resources(id, env_id, kind, logical_name, provider_id, meta)-- registry of Scaleway resources
 deployments(id, env_id, source_ref, image_digest, meta_json, plan_json, status, created_by, created_at, finished_at, error)
    -- status: queued→building→pending_approval→(approved|rejected)→deploying→(succeeded|failed)
-approvals(id, deployment_id, decided_by, decision, reason, ts)         -- la gate devops
-deployment_steps(id, deployment_id, seq, name, status, message, ts)    -- progression (SSE)
-notifications(id, deployment_id, kind, to, status, ts)                 -- mail dev / alerte panel
-jobs(id, type, payload, status, attempts, run_after, locked_by, locked_at)  -- file SKIP LOCKED
+approvals(id, deployment_id, decided_by, decision, reason, ts)         -- the devops gate
+deployment_steps(id, deployment_id, seq, name, status, message, ts)    -- progress (SSE)
+notifications(id, deployment_id, kind, to, status, ts)                 -- dev email / panel alert
+jobs(id, type, payload, status, attempts, run_after, locked_by, locked_at)  -- SKIP LOCKED queue
 audit_log(id, org_id, actor, action, target, ts)
 ```
-`plan_json` (le diff calculé au build) est ce que le devops review ; `approvals`
-trace la décision ; `env_config` porte les paramètres entreprise fusionnés au plan.
-La table `resources` remplace le fichier JSON local : elle porte les IDs Scaleway
-et le peu de secret non-récupérable (mot de passe RDB en mode managed ; le mode
-serverless par défaut n'en a pas, auth IAM).
+`plan_json` (the diff computed at build time) is what the devops reviews; `approvals`
+records the decision; `env_config` carries the company parameters merged into the plan.
+The `resources` table replaces the local JSON file: it holds the Scaleway IDs
+and the few non-recoverable secrets (RDB password in managed mode; the default
+serverless mode has none, IAM auth).
 
-### 3.5 Sécurité (le point dur)
-- **Creds cloud du client** : une clé IAM **scopée au minimum** (RDB, Object
-  Storage, Containers, Registry, Secret, IAM-read), chiffrée au repos.
-- **Chiffrement enveloppe** : clé maître (Scaleway Key Manager / KMS) → clés data
-  par org ; le worker déchiffre en mémoire, jamais en log.
-- **Isolation tenant** : toute requête est scopée à l'org du token ; pas de compute
-  multi-tenant partagé à isoler (BYOC) — l'isolation porte sur l'état + les secrets.
-- **Audit** : toute action sensible (deploy, lecture secret, rotation creds) loggée.
-- **CLI** : ne détient qu'un token court ; ni creds cloud ni secrets en local.
+### 3.5 Security (the hard part)
+- **Customer cloud creds**: an IAM key **scoped to the minimum** (RDB, Object
+  Storage, Containers, Registry, Secret, IAM-read), encrypted at rest.
+- **Envelope encryption**: master key (Scaleway Key Manager / KMS) → data keys
+  per org; the worker decrypts in memory, never in logs.
+- **Tenant isolation**: every request is scoped to the token's org; no shared
+  multi-tenant compute to isolate (BYOC) — isolation applies to state + secrets.
+- **Audit**: every sensitive action (deploy, secret read, creds rotation) is logged.
+- **CLI**: holds only a short-lived token; neither cloud creds nor secrets locally.
 
-### 3.6 Concurrence & idempotence
-- **Un deploy à la fois par (app, env)** : advisory lock Postgres ; les autres
-  attendent ou sont rejetés.
-- **Idempotent** : chaque étape vérifie l'état (table `resources` + lookup
-  Scaleway par tags) avant d'agir → un job repris ne double rien.
-- **Rollback** : sur échec après le rollout, repasser le container à la révision
-  précédente (Scaleway garde les révisions) ; les ressources créées restent (sûr).
+### 3.6 Concurrency & idempotency
+- **One deploy at a time per (app, env)**: Postgres advisory lock; the others
+  wait or are rejected.
+- **Idempotent**: every step checks the state (`resources` table + Scaleway
+  lookup by tags) before acting → a resumed job never doubles anything.
+- **Rollback**: on failure after the rollout, switch the container back to the
+  previous revision (Scaleway keeps revisions); created resources remain (safe).
 
-## 4. Le CLI devient un client mince
-- `vignemale login` : device-flow OAuth → token dans `~/.vignemale/auth.json`,
-  rattache l'app au projet entreprise, et **pose le remote git `vignemale`**.
-- Déclencher un deploy : `vignemale deploy` (pousse le source) **ou** `git push
-  vignemale`. Les deux mènent à build → plan → approbation devops → deploy.
+## 4. The CLI becomes a thin client
+- `vignemale login`: OAuth device-flow → token in `~/.vignemale/auth.json`,
+  attaches the app to the company project, and **sets the `vignemale` git remote**.
+- Triggering a deploy: `vignemale deploy` (pushes the source) **or** `git push
+  vignemale`. Both lead to build → plan → devops approval → deploy.
 - `vignemale secret set/list`, `vignemale logs`, `vignemale status`, `vignemale
-  destroy` : appels API.
-- `--local` conservé : même moteur, sans serveur ni approbation (self-hosted / dev).
+  destroy`: API calls.
+- `--local` kept: same engine, without server or approval (self-hosted / dev).
 
-## 5. Migrations = job dans le compte client
-Au lieu de charger l'app sur la machine de deploy, le worker lance un **job
-one-shot** (Serverless Job Scaleway) avec **l'image de l'app**, qui exécute
-`vignemale migrate` contre la base (schéma + `CREATE EXTENSION vector` + .sql).
-Avantages : mêmes deps que la prod, pas de couplage laptop, idempotent, tracé.
+## 5. Migrations = a job in the customer account
+Instead of loading the app on the deploy machine, the worker launches a **one-shot
+job** (Scaleway Serverless Job) with **the app's image**, which runs
+`vignemale migrate` against the database (schema + `CREATE EXTENSION vector` + .sql).
+Benefits: same deps as prod, no laptop coupling, idempotent, traced.
 
-## 6. Choix techniques (et pourquoi)
-- **Langage moteur + control plane : Go** (décidé) — type-safe pour la machine à
-  états du reconciler / l'API / les jobs ; **`scaleway-sdk-go` est le SDK de
-  référence** (le `scw` CLI en dérive) et couvre tout (`serverless_sqldb`,
-  `container`, `rdb`, `secret`, `registry`, `iam`, `jobs`, `cockpit`, `billing`) ;
-  binaire statique unique, goroutines pour le modèle worker. Le `vignemale-deploy`
-  Python reste le **PoC validé** dont le design se transpose.
-- **Build : server-side** (décidé) — le client pousse le source, la plateforme
-  build (BuildKit, amd64 natif) et pousse l'image au registre du client, façon
-  Encore. Coût assumé : une **build farm** à opérer (cf. §8). `collect` (Python)
-  vit dans ce build et émet le `meta` → Go reste pur.
-- **File : Postgres `SKIP LOCKED`** — pas de broker à opérer, transactionnel avec
-  l'état ; c'est aussi la primitive `queue` du produit (réutilisée).
-- **Multi-région/provider** : le reconciler abstrait le provider (interface Go) ;
-  région = config d'environnement. OVH plus tard via un 2ᵉ provider.
-- **CLI** : reste l'outil Python pour le **dev local** (`run`/`check`/`gen` —
-  couplés au runtime Python) ; pour le **cloud**, un client mince (Go ou Python)
-  qui pousse le source et streame. À trancher séparément.
+## 6. Technical choices (and why)
+- **Engine + control plane language: Go** (decided) — type-safe for the
+  reconciler's state machine / the API / the jobs; **`scaleway-sdk-go` is the
+  reference SDK** (the `scw` CLI derives from it) and covers everything (`serverless_sqldb`,
+  `container`, `rdb`, `secret`, `registry`, `iam`, `jobs`, `cockpit`, `billing`);
+  a single static binary, goroutines for the worker model. The Python
+  `vignemale-deploy` remains the **validated PoC** whose design transposes.
+- **Build: server-side** (decided) — the client pushes the source, the platform
+  builds (BuildKit, native amd64) and pushes the image to the customer's registry,
+  Encore-style. Accepted cost: a **build farm** to operate (see §8). `collect` (Python)
+  lives in that build and emits the `meta` → Go stays pure.
+- **Queue: Postgres `SKIP LOCKED`** — no broker to operate, transactional with
+  the state; it is also the product's `queue` primitive (reused).
+- **Multi-region/provider**: the reconciler abstracts the provider (Go interface);
+  region = environment config. OVH later via a 2nd provider.
+- **CLI**: remains the Python tool for **local dev** (`run`/`check`/`gen` —
+  coupled to the Python runtime); for the **cloud**, a thin client (Go or Python)
+  that pushes the source and streams. To be decided separately.
 
-## 7. Chemin PoC → prod (ordre proposé)
-1. **Réécrire le moteur en Go** (`vignemale-engine` Go) : reconciler propre
-   (interface `State`, diff désiré/réel, lock, rollback, IDs persistés) sur
-   `scaleway-sdk-go`. Le PoC Python sert de spec. Testable en CLI `--local` (le
-   binaire Go invoqué avec un `meta` + une image).
-2. **Migrations en Serverless Job in-account** (tue le hack de chargement local).
-3. **Build service** : worker collect(Python)+BuildKit → image amd64 + meta.
-4. **Squelette control plane Go** : API + Postgres (modèle 3.4) + `vignemale
-   login` + endpoint `deploy` qui *enqueue* le build.
-5. **Workers async** (build + deploy) + stream SSE + secrets/creds chiffrés.
-6. **Dashboard, observabilité (Cockpit), billing, multi-région.**
+## 7. PoC → prod path (proposed order)
+1. **Rewrite the engine in Go** (`vignemale-engine` in Go): a clean reconciler
+   (`State` interface, desired/actual diff, lock, rollback, persisted IDs) on
+   `scaleway-sdk-go`. The Python PoC serves as the spec. Testable via the CLI's
+   `--local` (the Go binary invoked with a `meta` + an image).
+2. **Migrations as in-account Serverless Jobs** (kills the local-loading hack).
+3. **Build service**: collect(Python)+BuildKit worker → amd64 image + meta.
+4. **Go control plane skeleton**: API + Postgres (model in 3.4) + `vignemale
+   login` + a `deploy` endpoint that *enqueues* the build.
+5. **Async workers** (build + deploy) + SSE stream + encrypted secrets/creds.
+6. **Dashboard, observability (Cockpit), billing, multi-region.**
 
-(1) et (2) dérisquent la fondation Go sans encore opérer le serveur ni la build
-farm. (3) introduit la build farm. (4-5) montent le control plane autour.
+(1) and (2) de-risk the Go foundation without yet operating the server or the build
+farm. (3) introduces the build farm. (4-5) assemble the control plane around it.
 
-## 7bis. Découpage en dépôts (open-core)
-DÉCIDÉ : modèle **open-core**, deux dépôts.
-- **`vignemale` (ce dépôt, open-source, MPL prévu)** : le runtime (cœur Rust +
-  SDK Python), la CLI dev (`run`/`check`/`gen`/`build`), `vignemale-deploy` (le
-  PoC Python qui sert de spec), la doc. Ce que l'utilisateur installe.
-- **`vignemale-cloud` (NOUVEAU, privé)** : le **moteur Go** (reconciler sur
-  `scaleway-sdk-go`), le **control plane** (API, jobs, git-receive, build
-  service), le **panel web**. Le produit commercial — jamais publié.
-Le contrat entre les deux = le **`meta` proto** (produit côté open-source par
-`collect`, consommé côté privé par le moteur Go).
+## 7bis. Repository split (open-core)
+DECIDED: **open-core** model, two repositories.
+- **`vignemale` (this repo, open-source, MPL planned)**: the runtime (Rust core +
+  Python SDK), the dev CLI (`run`/`check`/`gen`/`build`), `vignemale-deploy` (the
+  Python PoC that serves as the spec), the docs. What the user installs.
+- **`vignemale-cloud` (NEW, private)**: the **Go engine** (reconciler on
+  `scaleway-sdk-go`), the **control plane** (API, jobs, git-receive, build
+  service), the **web panel**. The commercial product — never published.
+The contract between the two = the **`meta` proto** (produced on the open-source
+side by `collect`, consumed on the private side by the Go engine).
 
-## 8. Questions ouvertes
-- **Bootstrap** : le control plane Go se déploie **à la main sur Scaleway**
-  (décidé — pas de dépendance circulaire à Vignemale). Simple instance/conteneur
-  + Postgres managé pour son propre état.
-- **Build farm** : où tourne BuildKit ? (instance Scaleway dédiée, ou k8s
-  Kapsule, ou Serverless Job avec BuildKit rootless). DinD/cache/sécurité à
-  cadrer. C'est le composant le plus lourd à opérer.
-- **CLI cloud : Go ou Python ?** (le dev local reste Python). À trancher.
-- **Réception du `git push vignemale`** : DÉCIDÉ — **le control plane héberge le
-  remote git** (smart-HTTP `git-receive-pack`, façon Heroku) ; le push déclenche
-  le build. `vignemale login` pose ce remote.
-- **Notifications** : mail (SMTP/Scaleway TEM) au dev ; alerte panel au devops
-  (in-app + mail/Slack optionnel).
-- **Rotation des creds/secrets** : politique et UX.
-- **Conformité RGPD** : croiser avec l'outillage `vignemale rgpd` déjà en place.
+## 8. Open questions
+- **Bootstrap**: the Go control plane is deployed **by hand on Scaleway**
+  (decided — no circular dependency on Vignemale). A simple instance/container
+  + managed Postgres for its own state.
+- **Build farm**: where does BuildKit run? (dedicated Scaleway instance, or k8s
+  Kapsule, or a Serverless Job with rootless BuildKit). DinD/cache/security to
+  be scoped. This is the heaviest component to operate.
+- **Cloud CLI: Go or Python?** (local dev stays Python). To be decided.
+- **Receiving the `git push vignemale`**: DECIDED — **the control plane hosts the
+  git remote** (smart-HTTP `git-receive-pack`, Heroku-style); the push triggers
+  the build. `vignemale login` sets this remote.
+- **Notifications**: email (SMTP/Scaleway TEM) to the dev; panel alert to the devops
+  (in-app + optional email/Slack).
+- **Creds/secrets rotation**: policy and UX.
+- **GDPR compliance**: cross-reference with the `vignemale gdpr` tooling already in place.

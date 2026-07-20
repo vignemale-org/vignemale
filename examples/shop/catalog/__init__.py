@@ -1,7 +1,7 @@
-"""Service `catalog` — un DOSSIER = un service (façon Encore).
+"""Service `catalog` — one FOLDER = one service (Encore-style).
 
-Le `Service` est déclaré ici ; les endpoints vivent dans les modules du
-dossier (`items.py`, …).
+The `Service` is declared here; the endpoints live in the folder's
+modules (`items.py`, …).
 """
 
 from vignemale import Service

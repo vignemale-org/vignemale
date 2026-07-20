@@ -1,8 +1,8 @@
-"""Exemple **typé** : `@api` avec modèles Pydantic.
+"""**Typed** example: `@api` with Pydantic models.
 
-Sert deux buts :
-  1. validation au runtime (Pydantic valide la requête entrante),
-  2. extraction STATIQUE (griffe lit les types sans exécuter le code → graphe meta).
+Serves two purposes:
+  1. runtime validation (Pydantic validates the incoming request),
+  2. STATIC extraction (griffe reads the types without running the code → meta graph).
 """
 
 from pydantic import BaseModel

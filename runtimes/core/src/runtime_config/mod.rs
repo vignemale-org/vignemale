@@ -1,5 +1,5 @@
-// Porté de `encore/runtimes/core/src/runtime_config/mod.rs`, rebrandé Vignemale.
-// Vue de plus haut niveau des métriques, dérivée du proto RuntimeConfig.
+// Ported from `encore/runtimes/core/src/runtime_config/mod.rs`, rebranded Vignemale.
+// Higher-level view of the metrics, derived from the RuntimeConfig proto.
 
 use std::collections::HashMap;
 

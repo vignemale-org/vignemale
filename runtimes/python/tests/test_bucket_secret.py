@@ -1,4 +1,4 @@
-"""Primitives Bucket (S3 via le core, MinIO auto-provisionné) et Secret."""
+"""Bucket (S3 via the core, MinIO auto-provisioned) and Secret primitives."""
 
 import json
 import os
@@ -10,7 +10,7 @@ import pytest
 from conftest import HERE, Server, free_port
 
 
-# --- Secret : unitaire, pas besoin d'infra ---
+# --- Secret: unit test, no infra needed ---
 
 def test_secret_resolution(monkeypatch):
     from vignemale import Secret
@@ -18,11 +18,11 @@ def test_secret_resolution(monkeypatch):
     monkeypatch.setenv("VIGNEMALE_SECRET_OPENAI_API_KEY", "via-prefix")
     assert Secret("OPENAI_API_KEY").get() == "via-prefix"
     monkeypatch.delenv("VIGNEMALE_SECRET_OPENAI_API_KEY")
-    monkeypatch.setenv("OPENAI_API_KEY", "via-brut")
-    assert Secret("OPENAI_API_KEY").get() == "via-brut"
+    monkeypatch.setenv("OPENAI_API_KEY", "via-raw")
+    assert Secret("OPENAI_API_KEY").get() == "via-raw"
 
 
-def test_secret_absent_explique(monkeypatch):
+def test_secret_absent_explained(monkeypatch):
     from vignemale import Secret
 
     monkeypatch.delenv("ABSENT_XYZ", raising=False)
@@ -31,7 +31,7 @@ def test_secret_absent_explique(monkeypatch):
         Secret("ABSENT_XYZ").get()
 
 
-def test_secret_et_bucket_declares_dans_collect(tmp_path):
+def test_secret_and_bucket_declared_in_collect(tmp_path):
     app = tmp_path / "app.py"
     app.write_text(
         "from vignemale import Bucket, Secret, api\n"
@@ -47,7 +47,7 @@ def test_secret_et_bucket_declares_dans_collect(tmp_path):
     assert extracted["secrets"] == ["MY_KEY"]
 
 
-# --- Bucket : intégration MinIO (skip si MinIO indisponible) ---
+# --- Bucket: MinIO integration (skip if MinIO unavailable) ---
 
 def _minio_up():
     import shutil
@@ -62,7 +62,7 @@ def _minio_up():
 
 
 needs_minio = pytest.mark.skipif(
-    not _minio_up(), reason="conteneur vignemale-minio non démarré"
+    not _minio_up(), reason="vignemale-minio container not running"
 )
 
 
@@ -78,9 +78,9 @@ def test_bucket_put_get_list_delete():
     b = Bucket(f"pytest-{uuid.uuid4().hex[:8]}")
     b.create_if_not_exists()
     assert b.exists("k.txt") is False
-    b.put("k.txt", b"bonjour")
+    b.put("k.txt", b"hello")
     assert b.exists("k.txt") is True
-    assert b.get("k.txt") == b"bonjour"
+    assert b.get("k.txt") == b"hello"
     assert "k.txt" in b.list()
     b.delete("k.txt")
     assert b.exists("k.txt") is False

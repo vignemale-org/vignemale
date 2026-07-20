@@ -1,9 +1,9 @@
-"""Exemple fullstack : un FRONT servi par le core Rust + l'API, un seul process.
+"""Fullstack example: a FRONTEND served by the Rust core + the API, one single process.
 
-Le front (SPA — ici du HTML/JS vanilla, mais c'est le même principe pour un
-Next.js exporté statiquement avec `output: 'export'` → dir="out") est servi
-directement par le runtime Rust : zéro Python exécuté pour les fichiers.
-`spa=True` → toute route inconnue de l'API renvoie index.html (routing client).
+The frontend (SPA — here vanilla HTML/JS, but the same principle applies to a
+statically-exported Next.js with `output: 'export'` → dir="out") is served
+directly by the Rust runtime: zero Python executed for the files.
+`spa=True` → any route unknown to the API returns index.html (client-side routing).
 
     vignemale run examples/fullstack/app.py
     open http://127.0.0.1:8080
@@ -16,7 +16,7 @@ static_files(path="/", dir="front", spa=True)
 
 @api(method="GET", path="/api/hello")
 def hello(query) -> dict:
-    return {"message": f"Bonjour {query.get('name', 'visiteur')} !"}
+    return {"message": f"Hello {query.get('name', 'visitor')}!"}
 
 
 if __name__ == "__main__":

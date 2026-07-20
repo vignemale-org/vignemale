@@ -1,14 +1,14 @@
-// Conversion des valeurs — miroir du val.rs d'Encore : les paramètres JSON
-// s'adaptent au type Postgres au moment du bind (coercions string → date /
-// uuid / numeric / bytea…), et les lignes reviennent en JSON typé.
+// Value conversion — mirror of Encore's val.rs: JSON parameters
+// adapt to the Postgres type at bind time (string → date / uuid /
+// numeric / bytea… coercions), and rows come back as typed JSON.
 
 use rust_decimal::prelude::FromPrimitive;
 use rust_decimal::Decimal;
 use tokio_postgres::types::{FromSql, IsNull, Kind, ToSql, Type};
 use tokio_postgres::Row;
 
-/// Décodage du type `vector` de pgvector (embeddings/RAG).
-/// Format binaire : i16 dim, i16 inutilisé, puis dim × f32 big-endian.
+/// Decoding of pgvector's `vector` type (embeddings/RAG).
+/// Binary format: i16 dim, i16 unused, then dim × f32 big-endian.
 struct PgVector(Vec<f32>);
 
 impl<'a> FromSql<'a> for PgVector {
@@ -17,14 +17,14 @@ impl<'a> FromSql<'a> for PgVector {
         raw: &'a [u8],
     ) -> Result<Self, Box<dyn std::error::Error + Sync + Send>> {
         if raw.len() < 4 {
-            return Err("vecteur pgvector tronqué".into());
+            return Err("truncated pgvector vector".into());
         }
         let dim = i16::from_be_bytes([raw[0], raw[1]]) as usize;
         let mut vals = Vec::with_capacity(dim);
         for k in 0..dim {
             let o = 4 + k * 4;
             if o + 4 > raw.len() {
-                return Err("vecteur pgvector tronqué".into());
+                return Err("truncated pgvector vector".into());
             }
             vals.push(f32::from_be_bytes([raw[o], raw[o + 1], raw[o + 2], raw[o + 3]]));
         }
@@ -36,7 +36,7 @@ impl<'a> FromSql<'a> for PgVector {
     }
 }
 
-/// Paramètre SQL venu du binding (valeur JSON).
+/// SQL parameter coming from the binding (JSON value).
 #[derive(Debug)]
 pub enum SqlParam {
     Null,
@@ -84,7 +84,7 @@ impl ToSql for SqlParam {
             SqlParam::Float(f) => match *ty {
                 Type::FLOAT4 => (*f as f32).to_sql(ty, out),
                 Type::NUMERIC => Decimal::from_f64(*f)
-                    .ok_or("float non représentable en NUMERIC")?
+                    .ok_or("float not representable as NUMERIC")?
                     .to_sql(ty, out),
                 _ => f.to_sql(ty, out),
             },
@@ -112,7 +112,7 @@ impl ToSql for SqlParam {
     }
 
     fn accepts(_ty: &Type) -> bool {
-        true // on tente la conversion ; l'erreur de bind remonte sinon
+        true // we attempt the conversion; otherwise the bind error propagates
     }
 
     tokio_postgres::types::to_sql_checked!();
@@ -122,7 +122,7 @@ pub(crate) fn params_refs(params: &[SqlParam]) -> Vec<&(dyn ToSql + Sync)> {
     params.iter().map(|p| p as &(dyn ToSql + Sync)).collect()
 }
 
-// --- lignes → JSON typé ---
+// --- rows → typed JSON ---
 
 pub(crate) fn rows_to_json(rows: &[Row]) -> anyhow::Result<serde_json::Value> {
     let mut out = Vec::with_capacity(rows.len());
@@ -156,7 +156,7 @@ fn array_to_json(row: &Row, i: usize, inner: &Type) -> anyhow::Result<serde_json
             J::Array(v.into_iter().map(|u| J::String(u.to_string())).collect())
         }),
         ref other => anyhow::bail!(
-            "sqldb: tableau de type non supporté: {other} (colonne {})",
+            "sqldb: unsupported array type: {other} (column {})",
             row.columns()[i].name()
         ),
     })
@@ -198,23 +198,23 @@ fn col_to_json(row: &Row, i: usize, ty: &Type) -> anyhow::Result<serde_json::Val
         Type::UUID => opt(row.try_get::<_, Option<uuid::Uuid>>(i)?, |v| {
             J::String(v.to_string())
         }),
-        // précision préservée : NUMERIC voyage en string (façon Decimal d'Encore)
+        // precision preserved: NUMERIC travels as a string (like Encore's Decimal)
         Type::NUMERIC => opt(row.try_get::<_, Option<Decimal>>(i)?, |v| {
             J::String(v.to_string())
         }),
-        // binaire : encodé base64 pour traverser le JSON
+        // binary: base64-encoded to travel through JSON
         Type::BYTEA => opt(row.try_get::<_, Option<Vec<u8>>>(i)?, |v| {
             use base64::Engine as _;
             J::String(base64::engine::general_purpose::STANDARD.encode(v))
         }),
-        // pgvector : type custom (hors constantes tokio_postgres) → rendu en tableau.
+        // pgvector: custom type (outside tokio_postgres constants) → rendered as an array.
         ref other if other.name() == "vector" => {
             opt(row.try_get::<_, Option<PgVector>>(i)?, |v| {
                 J::Array(v.0.into_iter().map(|f| J::from(f as f64)).collect())
             })
         }
         ref other => anyhow::bail!(
-            "sqldb: type de colonne non supporté: {other} (colonne {})",
+            "sqldb: unsupported column type: {other} (column {})",
             row.columns()[i].name()
         ),
     })

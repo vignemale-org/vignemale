@@ -1,31 +1,31 @@
-"""`vignemale.datamodel` — tables Pydantic : le schéma EST le code, le RGPD aussi.
+"""`vignemale.datamodel` — Pydantic tables: the schema IS the code, GDPR too.
 
     from vignemale.datamodel import Table, PII, sql
 
     class User(Table):
-        __database__ = "users"          # la SQLDatabase qui héberge la table
-        __subject__ = "id"              # colonne qui identifie LA PERSONNE (RGPD)
+        __database__ = "users"          # the SQLDatabase hosting the table
+        __subject__ = "id"              # column identifying THE PERSON (GDPR)
 
-        id: int | None = None           # clé primaire auto (BIGSERIAL)
-        email: str = PII(purpose="compte")
-        name: str = PII(purpose="compte")
+        id: int | None = None           # auto primary key (BIGSERIAL)
+        email: str = PII(purpose="account")
+        name: str = PII(purpose="account")
         plan: str = "free"
 
-        # requête custom attachée à la table (SQL assumé, typé au retour)
+        # custom query attached to the table (SQL by design, typed return)
         pros = sql("SELECT * FROM users WHERE plan = $1 ORDER BY id")
 
-    user = User.create(email="ada@ex.com", name="Ada")   # typé, validé
+    user = User.create(email="ada@ex.com", name="Ada")   # typed, validated
     user = User.find_one(email="ada@ex.com")
     User.pros("pro")                                     # → list[User]
 
-**L'ORM vit dans le core Rust** : ce module décrit la table (un descripteur
-JSON) et délègue — génération SQL (sea-query), whitelist des colonnes,
-création/migration additive du schéma, exécution. Le SDK n'assemble jamais
-de SQL ; un futur SDK (JS…) enverra le même descripteur au même moteur.
+**The ORM lives in the Rust core**: this module describes the table (a JSON
+descriptor) and delegates — SQL generation (sea-query), column whitelist,
+additive schema creation/migration, execution. The SDK never assembles SQL;
+a future SDK (JS…) will send the same descriptor to the same engine.
 
-RGPD natif : `PII(purpose=…)` marque les données personnelles, `__subject__`
-relie chaque ligne à une personne → `vignemale rgpd map/export/forget`.
-`__on_forget__` = "delete" (défaut) ou "anonymize".
+Native GDPR: `PII(purpose=…)` marks personal data, `__subject__` links each
+row to a person → `vignemale gdpr map/export/forget`.
+`__on_forget__` = "delete" (default) or "anonymize".
 """
 
 import datetime
@@ -39,25 +39,25 @@ from pydantic_core import PydanticUndefined
 from . import _core
 from .sqldb import SQLDatabase, SQLError
 
-# Registre des tables déclarées (pour le RGPD et l'outillage).
+# Registry of declared tables (for GDPR and the tooling).
 _tables: list = []
 
-# Registre des requêtes sql() déclarées : (classe, attribut, requête compilée)
-# — pour la validation par PREPARE de `vignemale check --sql`.
+# Registry of declared sql() queries: (class, attribute, compiled query)
+# — for the PREPARE validation of `vignemale check --sql`.
 _sql_queries: list = []
 
 _UNSET = PydanticUndefined
 
 
-def PII(default=_UNSET, *, purpose: str = "non précisée"):
-    """Marque un champ comme **donnée personnelle** (avec sa finalité)."""
+def PII(default=_UNSET, *, purpose: str = "unspecified"):
+    """Marks a field as **personal data** (with its purpose)."""
     return Field(default=default, json_schema_extra={"pii": True, "purpose": purpose})
 
 
 def sql(query: str, raw: bool = False, **param_types):
-    """Requête SQL custom attachée à la table (échappatoire assumée).
+    """Custom SQL query attached to the table (an escape hatch, by design).
 
-    **Paramètres nommés et typés** (validés/coercés par Pydantic à l'appel) :
+    **Named and typed parameters** (validated/coerced by Pydantic at call time):
 
         class User(Table):
             ...
@@ -67,13 +67,13 @@ def sql(query: str, raw: bool = False, **param_types):
             )
 
         User.pros(plan="pro", age=18)     # → list[User]
-        User.pros("pro", "18")            # positionnel ok ; "18" coercé en int
+        User.pros("pro", "18")            # positional ok; "18" coerced to int
 
-    Sans types déclarés, les placeholders positionnels `$1, $2…` restent
-    supportés : `sql("… WHERE plan = $1")` puis `User.pros("pro")`.
+    Without declared types, positional placeholders `$1, $2…` remain
+    supported: `sql("… WHERE plan = $1")` then `User.pros("pro")`.
 
-    `raw=True` → liste de dicts (jointures/agrégats qui ne correspondent pas
-    aux colonnes de la table).
+    `raw=True` → list of dicts (joins/aggregates that do not map to the
+    table's columns).
     """
     if not param_types:
 
@@ -82,7 +82,7 @@ def sql(query: str, raw: bool = False, **param_types):
             rows = cls._db().query(query, *params)
             return rows if raw else [cls.model_validate(r) for r in rows]
 
-        run.__vignemale_sql__ = query  # pour la validation par PREPARE (check --sql)
+        run.__vignemale_sql__ = query  # for the PREPARE validation (check --sql)
         return classmethod(run)
 
     import re
@@ -96,16 +96,16 @@ def sql(query: str, raw: bool = False, **param_types):
     unknown_in_query = used - set(order)
     if unknown_in_query:
         raise TypeError(
-            f"sql(): paramètre(s) non déclaré(s) dans la requête: "
+            f"sql(): parameter(s) not declared in the query: "
             f"{', '.join(sorted(unknown_in_query))}"
         )
     unused = set(order) - used
     if unused:
         raise TypeError(
-            f"sql(): paramètre(s) déclaré(s) mais absent(s) de la requête: "
+            f"sql(): parameter(s) declared but absent from the query: "
             f"{', '.join(sorted(unused))}"
         )
-    # $nom → $N (les occurrences multiples partagent le même placeholder)
+    # $name → $N (multiple occurrences share the same placeholder)
     compiled = re.sub(
         r"\$([a-zA-Z_][a-zA-Z0-9_]*)",
         lambda m: f"${order.index(m.group(1)) + 1}",
@@ -117,23 +117,23 @@ def sql(query: str, raw: bool = False, **param_types):
         values = dict(zip(order, args))
         overlap = set(values) & set(kwargs)
         if overlap:
-            raise TypeError(f"paramètre(s) en double: {', '.join(sorted(overlap))}")
+            raise TypeError(f"duplicate parameter(s): {', '.join(sorted(overlap))}")
         values.update(kwargs)
         extra = set(values) - set(order)
         if extra:
-            raise TypeError(f"paramètre(s) inconnu(s): {', '.join(sorted(extra))}")
+            raise TypeError(f"unknown parameter(s): {', '.join(sorted(extra))}")
         missing = [n for n in order if n not in values]
         if missing:
-            raise TypeError(f"paramètre(s) manquant(s): {', '.join(missing)}")
+            raise TypeError(f"missing parameter(s): {', '.join(missing)}")
         bound = [adapters[n].validate_python(values[n]) for n in order]
         rows = cls._db().query(compiled, *bound)
         return rows if raw else [cls.model_validate(r) for r in rows]
 
-    run.__vignemale_sql__ = compiled  # pour la validation par PREPARE (check --sql)
+    run.__vignemale_sql__ = compiled  # for the PREPARE validation (check --sql)
     return classmethod(run)
 
 
-# Types logiques envoyés au core (qui fait le mapping SQL).
+# Logical types sent to the core (which does the SQL mapping).
 _LOGICAL_TYPES = {
     int: "int",
     str: "str",
@@ -162,16 +162,16 @@ def _logical_type(annotation) -> str:
     base = typing.get_origin(base) or base  # list[str] → list, dict[...] → dict
     logical = _LOGICAL_TYPES.get(base)
     if logical is None:
-        raise TypeError(f"type de colonne non supporté: {annotation!r}")
+        raise TypeError(f"unsupported column type: {annotation!r}")
     return logical
 
 
 class Table(BaseModel):
-    """Classe de base d'une table. Sous-classe = table (enregistrée au registre)."""
+    """Base class for a table. Subclass = table (added to the registry)."""
 
     __database__: typing.ClassVar[str] = ""
     __tablename__: typing.ClassVar[str] = ""
-    __subject__: typing.ClassVar[str] = ""  # colonne identifiant la personne
+    __subject__: typing.ClassVar[str] = ""  # column identifying the person
     __on_forget__: typing.ClassVar[str] = "delete"  # delete | anonymize
 
     def __init_subclass__(cls, **kwargs):
@@ -186,12 +186,12 @@ class Table(BaseModel):
             if compiled:
                 _sql_queries.append((cls, attr, compiled))
 
-    # --- plomberie : le descripteur part au core, le core fait le SQL ---
+    # --- plumbing: the descriptor goes to the core, the core does the SQL ---
 
     @classmethod
     def _db(cls) -> SQLDatabase:
         if not cls.__database__:
-            raise RuntimeError(f"{cls.__name__}: __database__ non déclaré")
+            raise RuntimeError(f"{cls.__name__}: __database__ not declared")
         return SQLDatabase(cls.__database__)
 
     @classmethod
@@ -237,16 +237,16 @@ class Table(BaseModel):
 
     @classmethod
     def ensure_table(cls) -> None:
-        """Crée la table si besoin et ajoute les colonnes manquantes
-        (migration additive). Appelée automatiquement par le CRUD ; à appeler
-        explicitement avant d'attaquer la table en SQL brut (transactions…)."""
+        """Creates the table if needed and adds the missing columns
+        (additive migration). Called automatically by the CRUD; call it
+        explicitly before hitting the table in raw SQL (transactions…)."""
         cls._ensure()
 
-    # --- CRUD (délégué au core) ---
+    # --- CRUD (delegated to the core) ---
 
     @classmethod
     def create(cls, **fields):
-        obj = cls(**fields)  # validation Pydantic
+        obj = cls(**fields)  # Pydantic validation
         values = obj.model_dump()
         if values.get("id") is None:
             values.pop("id", None)
@@ -272,7 +272,7 @@ class Table(BaseModel):
 
     def save(self):
         if getattr(self, "id", None) is None:
-            raise ValueError("save() exige un id — utilise create()")
+            raise ValueError("save() requires an id — use create()")
         values = self.model_dump()
         values.pop("id")
         type(self)._op("update", pk=self.id, values=values)
@@ -284,17 +284,17 @@ class Table(BaseModel):
     @classmethod
     def delete_where(cls, **where) -> int:
         if not where:
-            raise ValueError("delete_where() exige au moins un critère")
+            raise ValueError("delete_where() requires at least one criterion")
         return cls._op("delete_where", where=where)
 
     @classmethod
     def update_where(cls, values: dict, **where) -> int:
-        """UPDATE en masse (utilisé par l'anonymisation RGPD)."""
+        """Bulk UPDATE (used by the GDPR anonymization)."""
         if not where:
-            raise ValueError("update_where() exige au moins un critère")
+            raise ValueError("update_where() requires at least one criterion")
         return cls._op("update_where", values=values, where=where)
 
-    # --- RGPD : introspection ---
+    # --- GDPR: introspection ---
 
     @classmethod
     def _prepare_check(cls, query: str) -> dict:
@@ -306,24 +306,24 @@ class Table(BaseModel):
 
     @classmethod
     def pii_fields(cls) -> dict:
-        """{champ: finalité} des données personnelles déclarées."""
+        """{field: purpose} of the declared personal data."""
         out = {}
         for name, f in cls._columns().items():
             extra = f.json_schema_extra or {}
             if isinstance(extra, dict) and extra.get("pii"):
-                out[name] = extra.get("purpose", "non précisée")
+                out[name] = extra.get("purpose", "unspecified")
         return out
 
 
 def check_sql_queries() -> list:
-    """Valide chaque requête `sql()` déclarée par un PREPARE Postgres — le
-    mécanisme de `sqlx::query!`, au moment `vignemale check` : syntaxe,
-    tables, colonnes, types inférés. Rien n'est exécuté.
+    """Validates each declared `sql()` query with a Postgres PREPARE — the
+    mechanism of `sqlx::query!`, at `vignemale check` time: syntax, tables,
+    columns, inferred types. Nothing is executed.
 
-    Renvoie un rapport par requête : {query, ok, params?, columns?, error?}.
+    Returns one report per query: {query, ok, params?, columns?, error?}.
     """
     for t in _tables:
-        t.ensure_table()  # les tables doivent exister pour que PREPARE valide
+        t.ensure_table()  # the tables must exist for PREPARE to validate
     report = []
     for cls, attr, compiled in _sql_queries:
         label = f"{cls.__name__}.{attr}"

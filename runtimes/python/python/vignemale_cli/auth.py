@@ -1,9 +1,9 @@
-"""`vignemale login` — authentification CLI par device-flow (OAuth 2.0 Device
-Authorization Grant, RFC 8628) contre le panel Vignemale Cloud (better-auth).
+"""`vignemale login` — CLI authentication via device-flow (OAuth 2.0 Device
+Authorization Grant, RFC 8628) against the Vignemale Cloud panel (better-auth).
 
-Aucune dépendance : urllib + webbrowser (stdlib). Le token obtenu est stocké
-dans ~/.vignemale/credentials (chmod 600) et réutilisé par les commandes qui
-parlent au control plane.
+No dependencies: urllib + webbrowser (stdlib). The obtained token is stored
+in ~/.vignemale/credentials (chmod 600) and reused by the commands that
+talk to the control plane.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ GRANT_DEVICE_CODE = "urn:ietf:params:oauth:grant-type:device_code"
 
 
 def cloud_url() -> str:
-    """URL du panel Vignemale Cloud (surchargeable pour le dev/self-host)."""
+    """URL of the Vignemale Cloud panel (overridable for dev/self-host)."""
     return os.environ.get("VIGNEMALE_CLOUD_URL", DEFAULT_CLOUD_URL).rstrip("/")
 
 
@@ -57,7 +57,7 @@ def save_token(url: str, token: str) -> str:
 
 
 def load_token() -> dict | None:
-    """Identifiants stockés (cloud_url + token), ou None si pas connecté."""
+    """Stored credentials (cloud_url + token), or None if not logged in."""
     try:
         with open(credentials_path()) as f:
             return json.load(f)
@@ -68,18 +68,18 @@ def load_token() -> dict | None:
 def logout() -> None:
     try:
         os.remove(credentials_path())
-        print("vignemale: déconnecté.")
+        print("vignemale: logged out.")
     except FileNotFoundError:
-        print("vignemale: déjà déconnecté.")
+        print("vignemale: already logged out.")
 
 
 def login() -> None:
     base = cloud_url()
 
-    # 1) demander un device code + user code
+    # 1) request a device code + user code
     status, d = _post(f"{base}/api/auth/device/code", {"client_id": CLIENT_ID})
     if status >= 400 or "device_code" not in d:
-        raise SystemExit(f"vignemale: demande de code échouée ({status}) : {d or 'réponse vide'}")
+        raise SystemExit(f"vignemale: code request failed ({status}): {d or 'empty response'}")
     device_code = d["device_code"]
     user_code = d.get("user_code", "?")
     verify_uri = d.get("verification_uri") or f"{base}/device"
@@ -87,15 +87,15 @@ def login() -> None:
     interval = int(d.get("interval", 5))
     deadline = time.time() + int(d.get("expires_in", 600))
 
-    print(f"\n  Ouvre cette page pour autoriser le CLI :\n    {verify_uri}")
-    print(f"  et entre le code :  {user_code}\n", flush=True)
+    print(f"\n  Open this page to authorize the CLI:\n    {verify_uri}")
+    print(f"  and enter the code:  {user_code}\n", flush=True)
     try:
         webbrowser.open(verify_complete)
     except Exception:
         pass
 
-    # 2) poller le token jusqu'à approbation
-    print("  En attente d'approbation dans le navigateur…", flush=True)
+    # 2) poll the token until approval
+    print("  Waiting for approval in the browser…", flush=True)
     while time.time() < deadline:
         time.sleep(interval)
         status, t = _post(
@@ -104,8 +104,8 @@ def login() -> None:
         )
         if status < 400 and t.get("access_token"):
             path = save_token(base, t["access_token"])
-            print(f"\n  ✓ Connecté à {base}")
-            print(f"  (identifiants : {path})")
+            print(f"\n  ✓ Connected to {base}")
+            print(f"  (credentials: {path})")
             return
         err = t.get("error")
         if err == "authorization_pending":
@@ -113,5 +113,5 @@ def login() -> None:
         if err == "slow_down":
             interval += 5
             continue
-        raise SystemExit(f"vignemale: connexion refusée ({err or status}).")
-    raise SystemExit("vignemale: délai d'approbation dépassé. Relance `vignemale login`.")
+        raise SystemExit(f"vignemale: login refused ({err or status}).")
+    raise SystemExit("vignemale: approval timed out. Run `vignemale login` again.")

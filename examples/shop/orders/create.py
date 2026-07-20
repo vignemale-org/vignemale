@@ -1,6 +1,6 @@
-"""Création de commandes — appelle `catalog` via le client GÉNÉRÉ
-(`vignemale gen`) : signature typée, autocomplétion, retour re-typé.
-Direct en local, HTTP signé une fois déployé : même code."""
+"""Order creation — calls `catalog` via the GENERATED client
+(`vignemale gen`): typed signature, autocompletion, re-typed return.
+Direct locally, signed HTTP once deployed: same code."""
 
 from pydantic import BaseModel
 
@@ -15,5 +15,5 @@ class Order(BaseModel):
 
 @api(method="POST", path="/orders")
 def create_order(body: Order) -> dict:
-    item = catalog.get_item(id=body.item_id)  # → Item (typé), pas un dict
+    item = catalog.get_item(id=body.item_id)  # → Item (typed), not a dict
     return {"created": True, "item": item, "qty": body.qty}

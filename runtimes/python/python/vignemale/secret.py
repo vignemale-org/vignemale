@@ -1,4 +1,4 @@
-"""Primitive `Secret` : un secret déclaré, résolu par le core (façon Encore).
+"""`Secret` primitive: a declared secret, resolved by the core (Encore-style).
 
     from vignemale import Secret
 
@@ -6,24 +6,24 @@
 
     @api(method="POST", path="/chat")
     def chat(body: Msg) -> dict:
-        client = OpenAI(api_key=OPENAI_KEY.get())   # résolu au runtime
+        client = OpenAI(api_key=OPENAI_KEY.get())   # resolved at runtime
         ...
 
-Le secret est **déclaré dans le code**, sa valeur vient de l'ENVIRONNEMENT
-(jamais en clair dans le source) :
+The secret is **declared in the code**, its value comes from the ENVIRONMENT
+(never in cleartext in the source):
 
-  1. `VIGNEMALE_SECRET_<NOM>`  (ex. VIGNEMALE_SECRET_OPENAI_API_KEY)
-  2. `<NOM>`                   (la variable d'environnement brute, ex. OPENAI_API_KEY)
+  1. `VIGNEMALE_SECRET_<NAME>`  (e.g. VIGNEMALE_SECRET_OPENAI_API_KEY)
+  2. `<NAME>`                   (the raw environment variable, e.g. OPENAI_API_KEY)
 
-Déclaratif → `vignemale check` liste les secrets requis (le deploy saura
-lesquels injecter). Résolu par le module `secrets` du core (cache, encodages).
+Declarative → `vignemale check` lists the required secrets (deploy will know
+which ones to inject). Resolved by the core's `secrets` module (cache, encodings).
 """
 
 import os
 
 from . import _core
 
-# Secrets déclarés (pour collect / meta — le deploy sait quoi injecter).
+# Declared secrets (for collect / meta — deploy knows what to inject).
 _secrets: list = []
 
 
@@ -37,16 +37,16 @@ class Secret:
         return specific if specific in os.environ else self.name
 
     def get(self) -> str:
-        """Valeur du secret (str). Lève KeyError si non défini."""
+        """Secret value (str). Raises KeyError if not defined."""
         return self.get_bytes().decode("utf-8")
 
     def get_bytes(self) -> bytes:
-        """Valeur brute (bytes) — résolue via le core (`secrets`)."""
+        """Raw value (bytes) — resolved via the core (`secrets`)."""
         env = self._env_name()
         if env not in os.environ:
             raise KeyError(
-                f"secret '{self.name}' non défini : pose "
-                f"VIGNEMALE_SECRET_{self.name.upper().replace('-', '_')} ou {self.name}"
+                f"secret '{self.name}' not defined: set "
+                f"VIGNEMALE_SECRET_{self.name.upper().replace('-', '_')} or {self.name}"
             )
         return _core.resolve_env_secret(env)
 

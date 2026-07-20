@@ -1,12 +1,12 @@
-"""Exemple « tout-en-un » : ce que Vignemale sait faire aujourd'hui.
+"""All-in-one example: what Vignemale can do today.
 
-  - `@api` typé Pydantic  → validation auto de la requête (422 si invalide)
-  - paramètre de chemin   → `/notes/:id`
-  - `HTTPError`           → renvoyer un 404 propre depuis un handler
-  - `stream=True`         → streaming SSE token par token (le cas agent IA)
+  - Pydantic-typed `@api`  → automatic request validation (422 if invalid)
+  - path parameter         → `/notes/:id`
+  - `HTTPError`            → return a clean 404 from a handler
+  - `stream=True`          → token-by-token SSE streaming (the AI-agent case)
 
-Lancer :  vignemale run examples/assistant.py
-   ou  :  python examples/assistant.py
+Run:  vignemale run examples/assistant.py
+  or:  python examples/assistant.py
 """
 
 import time
@@ -16,11 +16,11 @@ from pydantic import BaseModel
 from vignemale import HTTPError, api, serve
 
 
-# ---- endpoints typés (validés par Pydantic, extraits en statique par `check`) ----
+# ---- typed endpoints (validated by Pydantic, statically extracted by `check`) ----
 
 class AskRequest(BaseModel):
     question: str
-    lang: str = "fr"
+    lang: str = "en"
 
 
 class AskReply(BaseModel):
@@ -30,27 +30,27 @@ class AskReply(BaseModel):
 
 @api(method="POST", path="/ask")
 def ask(body: AskRequest) -> AskReply:
-    return AskReply(answer=f"Tu as demandé : « {body.question} »", lang=body.lang)
+    return AskReply(answer=f"You asked: \"{body.question}\"", lang=body.lang)
 
 
-# ---- paramètre de chemin + erreur HTTP ----
+# ---- path parameter + HTTP error ----
 
-NOTES = {"1": "acheter du pain", "2": "finir sqldb"}
+NOTES = {"1": "buy bread", "2": "finish sqldb"}
 
 
 @api(method="GET", path="/notes/:id")
 def get_note(id) -> dict:
     if id not in NOTES:
-        raise HTTPError(404, f"note {id} introuvable")
+        raise HTTPError(404, f"note {id} not found")
     return {"id": id, "text": NOTES[id]}
 
 
-# ---- streaming SSE (la brique « agent IA ») ----
+# ---- SSE streaming (the "AI agent" building block) ----
 
 @api(method="POST", path="/chat", stream=True)
 def chat(stream, body=None):
-    prompt = (body or {}).get("prompt", "salut")
-    for mot in f"Réponse simulée à « {prompt} », streamée mot à mot.".split(" "):
+    prompt = (body or {}).get("prompt", "hi")
+    for mot in f"Simulated reply to \"{prompt}\", streamed word by word.".split(" "):
         stream.write(mot + " ")
         time.sleep(0.1)
 

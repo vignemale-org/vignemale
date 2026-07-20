@@ -1,5 +1,5 @@
-"""Appels service-à-service : local (direct) et déployé (HTTP signé),
-avec propagation de l'auth et du trace-id W3C."""
+"""Service-to-service calls: local (direct) and deployed (signed HTTP),
+with propagation of the auth data and the W3C trace-id."""
 
 import json
 import os
@@ -29,7 +29,7 @@ def post(addr, path, data, token=None):
         return e.code, json.loads(e.read())
 
 
-# --- mode LOCAL : tous les services dans un process, call() = appel direct ---
+# --- LOCAL mode: all services in one process, call() = direct call ---
 
 
 @pytest.fixture(scope="module")
@@ -50,31 +50,31 @@ def test_call_local(shop):
     assert body == {"created": True, "item": {"id": 7, "name": "widget"}, "qty": 3}
 
 
-def test_client_style_encore():
-    """`from vignemale.clients import x` → client dynamique, méthodes = endpoints."""
+def test_client_encore_style():
+    """`from vignemale.clients import x` → dynamic client, methods = endpoints."""
     from vignemale.api import APIError
-    from vignemale.clients import catalog  # n'importe quel nom de service
+    from vignemale.clients import catalog  # any service name
 
     assert repr(catalog) == "ServiceClient('catalog')"
-    with pytest.raises(APIError, match="introuvable"):
-        catalog.endpoint_inconnu(id=1)  # local, pas d'endpoint enregistré
+    with pytest.raises(APIError, match="not found"):
+        catalog.unknown_endpoint(id=1)  # local, no registered endpoint
 
 
-def test_call_local_endpoint_inconnu(shop):
-    # call() vers un endpoint inexistant → not_found propre (500 interne car
-    # levé DANS le handler ? non : APIError → statut porté)
+def test_call_local_unknown_endpoint(shop):
+    # call() to a nonexistent endpoint → clean not_found (internal 500 because
+    # raised INSIDE the handler? no: APIError → status carried)
     from vignemale.api import APIError
     from vignemale.call import _call_local
 
-    with pytest.raises(APIError, match="introuvable"):
-        _call_local("catalog", "nexiste_pas", None, {})
+    with pytest.raises(APIError, match="not found"):
+        _call_local("catalog", "does_not_exist", None, {})
 
 
-# --- mode DÉPLOYÉ : deux process, call() = HTTP signé + propagation ---
+# --- DEPLOYED mode: two processes, call() = signed HTTP + propagation ---
 
 
 @pytest.fixture(scope="module")
-def deux_services():
+def two_services():
     addr_cat = f"127.0.0.1:{free_port()}"
     addr_ord = f"127.0.0.1:{free_port()}"
     base = {k: v for k, v in os.environ.items()}
@@ -96,25 +96,25 @@ def deux_services():
     ord_.stop()
 
 
-def test_call_http_signe_et_auth_propagee(deux_services):
-    addr_cat, addr_ord, cat, ord_ = deux_services
+def test_call_http_signed_and_auth_propagated(two_services):
+    addr_cat, addr_ord, cat, ord_ = two_services
     status, body = post(addr_ord, "/orders", {"item_id": 7}, token="sesame")
     assert status == 200
-    # l'item vient de catalog, par HTTP signé, et catalog (endpoint auth=True)
-    # a bien reçu les données d'auth PROPAGÉES depuis orders
+    # the item comes from catalog, over signed HTTP, and catalog (endpoint auth=True)
+    # did receive the auth data PROPAGATED from orders
     assert body["item"] == {"id": 7, "name": "widget", "seen_user": "u-42"}
     assert body["by"] == "u-42"
 
 
-def test_appel_interne_non_signe_rejete(deux_services):
-    addr_cat, *_ = deux_services
+def test_internal_call_unsigned_rejected(two_services):
+    addr_cat, *_ = two_services
     status, body = post(addr_cat, "/__vignemale/call/get_item", {"params": {"id": "1"}})
     assert status == 401
     assert body["code"] == "unauthenticated"
 
 
-def test_appel_interne_signature_falsifiee(deux_services):
-    addr_cat, *_ = deux_services
+def test_internal_call_forged_signature(two_services):
+    addr_cat, *_ = two_services
     payload = json.dumps({"params": {"id": "1"}, "body": None}).encode()
     req = urllib.request.Request(
         f"http://{addr_cat}/__vignemale/call/get_item",
@@ -127,18 +127,18 @@ def test_appel_interne_signature_falsifiee(deux_services):
     )
     try:
         urllib.request.urlopen(req, timeout=5)
-        assert False, "une signature falsifiée doit être rejetée"
+        assert False, "a forged signature must be rejected"
     except urllib.error.HTTPError as e:
         assert e.code == 401
-        assert json.loads(e.read())["message"] == "signature invalide"
+        assert json.loads(e.read())["message"] == "invalid signature"
 
 
-def test_trace_id_propage_entre_services(deux_services):
-    # EN DERNIER : ce test arrête les serveurs pour lire leurs logs.
-    addr_cat, addr_ord, cat, ord_ = deux_services
+def test_trace_id_propagated_between_services(two_services):
+    # LAST: this test stops the servers to read their logs.
+    addr_cat, addr_ord, cat, ord_ = two_services
     status, _ = post(addr_ord, "/orders", {"item_id": 1}, token="sesame")
     assert status == 200
-    time.sleep(0.3)  # laisser les logs s'écrire
+    time.sleep(0.3)  # let the logs flush
     cat.stop()
     ord_.stop()
 
@@ -156,5 +156,5 @@ def test_trace_id_propage_entre_services(deux_services):
     orders_traces = trace_ids(ord_, "create_order")
     catalog_traces = trace_ids(cat, "get_item")
     assert orders_traces and catalog_traces
-    # le même trace-id traverse les deux services (W3C traceparent)
+    # the same trace-id crosses both services (W3C traceparent)
     assert set(catalog_traces) & set(orders_traces)

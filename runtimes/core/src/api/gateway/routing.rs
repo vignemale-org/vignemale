@@ -1,9 +1,9 @@
-// Sélection de la route : préfixe le plus long, sur frontière de segment.
+// Route selection: longest prefix, on a segment boundary.
 
 use super::GatewayRoute;
 
-/// Trouve le service pour un path. Les routes sont triées (plus long préfixe
-/// d'abord) à la construction ; `/` est le catch-all final.
+/// Finds the service for a path. The routes are sorted (longest prefix
+/// first) at construction; `/` is the final catch-all.
 pub(crate) fn pick_route<'a>(routes: &'a [GatewayRoute], path: &str) -> Option<&'a GatewayRoute> {
     routes.iter().find(|r| {
         r.prefix == "/"
@@ -40,8 +40,8 @@ mod tests {
         let r = routes();
         assert_eq!(pick_route(&r, "/orders/42").unwrap().service, "orders");
         assert_eq!(pick_route(&r, "/orders").unwrap().service, "orders");
-        assert_eq!(pick_route(&r, "/autre").unwrap().service, "web"); // catch-all
-        // frontière de segment : "/ordersxyz" ne matche PAS "/orders"
+        assert_eq!(pick_route(&r, "/other").unwrap().service, "web"); // catch-all
+        // segment boundary: "/ordersxyz" does NOT match "/orders"
         assert_eq!(pick_route(&r, "/ordersxyz").unwrap().service, "web");
     }
 
@@ -53,6 +53,6 @@ mod tests {
             upstream: "http://api".into(),
             requires_auth: false,
         }];
-        assert!(pick_route(&r, "/autre").is_none());
+        assert!(pick_route(&r, "/other").is_none());
     }
 }

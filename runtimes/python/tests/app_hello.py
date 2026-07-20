@@ -1,6 +1,6 @@
-"""Mini-app de démo : on écrit des @api, on lance `serve`, on curl.
+"""Demo mini-app: write some @api handlers, run `serve`, then curl.
 
-    python tests/app_hello.py        # sert sur 127.0.0.1:8077
+    python tests/app_hello.py        # serves on 127.0.0.1:8077
 """
 
 from vignemale.api import api, serve
@@ -8,7 +8,7 @@ from vignemale.api import api, serve
 
 @api(method="GET", path="/hello")
 def hello():
-    return {"msg": "bonjour depuis vignemale"}
+    return {"msg": "hello from vignemale"}
 
 
 @api(method="GET", path="/greet/:name")
@@ -28,12 +28,12 @@ def search(query):
 
 @api(method="GET", path="/whoami")
 def whoami(headers):
-    return {"client": headers.get("x-client", "inconnu")}
+    return {"client": headers.get("x-client", "unknown")}
 
 
 @api(method="GET", path="/boom")
 def boom():
-    raise ValueError("explosion contrôlée")
+    raise ValueError("controlled explosion")
 
 
 @api(method="GET", path="/slow", timeout=0.5)
@@ -48,7 +48,7 @@ def slow():
 def work():
     import time
 
-    time.sleep(1.5)  # requête « longue » pour tester le drain
+    time.sleep(1.5)  # "long" request to test the drain
     return {"done": True}
 
 
@@ -59,10 +59,10 @@ def small(body=None):
 
 @api(method="GET", path="/stream", stream=True)
 def stream_demo(stream):
-    # Simule un agent qui streame ses tokens (un vrai modèle ferait pareil).
+    # Simulates an agent streaming its tokens (a real model would do the same).
     import time
 
-    for word in "ceci est un flux vignemale token par token".split(" "):
+    for word in "this is a vignemale stream token by token".split(" "):
         stream.write(word + " ")
         time.sleep(0.05)
 

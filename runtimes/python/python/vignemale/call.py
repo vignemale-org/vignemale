@@ -1,16 +1,16 @@
-"""Appels service-à-service : `call("catalog", "get_item", id=7)`.
+"""Service-to-service calls: `call("catalog", "get_item", id=7)`.
 
-Le même code marche dans les deux mondes (provider switch, façon Encore) :
+The same code works in both worlds (provider switch, Encore style):
 
-- **local** (`vignemale run` d'un dossier) : tous les services sont dans le
-  process → l'appel est un appel de fonction direct (zéro HTTP), avec la
-  validation Pydantic et les erreurs habituelles ;
-- **déployé** : `VIGNEMALE_SERVICE_<NOM>` (posé par le deploy) donne l'URL du
-  service → l'appel part en HTTP sur la route interne `/__vignemale/call/…`,
-  **signé** (HMAC, secret partagé `VIGNEMALE_SERVICE_SECRET`), avec
-  propagation du contexte : `traceparent` (W3C, nouveau span) et les données
-  d'auth de la requête entrante (`x-vignemale-auth-data`) — les appels
-  internes sont de confiance, ils ne repassent pas par l'auth handler.
+- **local** (`vignemale run` of a directory): all services live in the
+  process → the call is a direct function call (zero HTTP), with the usual
+  Pydantic validation and errors;
+- **deployed**: `VIGNEMALE_SERVICE_<NAME>` (set by the deploy) gives the
+  service's URL → the call goes over HTTP on the internal route
+  `/__vignemale/call/…`, **signed** (HMAC, shared secret
+  `VIGNEMALE_SERVICE_SECRET`), with context propagation: `traceparent` (W3C,
+  new span) and the incoming request's auth data (`x-vignemale-auth-data`) —
+  internal calls are trusted, they do not go through the auth handler again.
 
     from vignemale import api, call
 
@@ -34,10 +34,10 @@ from . import service as _service_mod
 
 
 def call(service: str, endpoint: str, body=None, **params):
-    """Appelle `endpoint` du service `service`. Renvoie la réponse décodée.
+    """Calls `endpoint` of service `service`. Returns the decoded response.
 
-    `params` = paramètres de chemin de l'endpoint cible ; `body` = corps JSON.
-    Les erreurs remontent en `APIError` (même contrat que les appels HTTP).
+    `params` = path parameters of the target endpoint; `body` = JSON body.
+    Errors surface as `APIError` (same contract as HTTP calls).
     """
     env_key = f"VIGNEMALE_SERVICE_{service.upper().replace('-', '_')}"
     base_url = os.environ.get(env_key)
@@ -46,16 +46,16 @@ def call(service: str, endpoint: str, body=None, **params):
     return _call_http(base_url, service, endpoint, body, params)
 
 
-# --- mode local : tous les services dans le process, appel direct ---
+# --- local mode: all services in the process, direct call ---
 
 
 def _call_local(service: str, endpoint: str, body, params):
     modules = [m for (n, m) in _service_mod._services if n == service]
 
     def in_service(module: str) -> bool:
-        # le module de l'endpoint = celui du Service, ou un sous-module
-        # (dossier-service : Service("catalog") dans catalog/__init__.py,
-        # endpoints dans catalog/items.py → module "catalog.items")
+        # the endpoint's module = the Service's module, or a submodule
+        # (directory-service: Service("catalog") in catalog/__init__.py,
+        # endpoints in catalog/items.py → module "catalog.items")
         return any(module == m or module.startswith(m + ".") for m in modules)
 
     for name, _method, _path, wrapper, stream, *_rest in _endpoints:
@@ -65,27 +65,28 @@ def _call_local(service: str, endpoint: str, body, params):
             continue
         if stream:
             raise APIError(
-                "unimplemented", "call() ne supporte pas les endpoints streaming"
+                "unimplemented", "call() does not support streaming endpoints"
             )
         kwargs = dict(params)
         if body is not None:
             kwargs["body"] = body if not hasattr(body, "model_dump") else body.model_dump()
         ctx = _request_ctx.get() or {}
-        kwargs["auth"] = ctx.get("auth")  # propagation locale (filtrée si non déclarée)
+        kwargs["auth"] = ctx.get("auth")  # local propagation (filtered out if not declared)
         kwargs["headers"] = {"traceparent": ctx.get("traceparent") or ""}
         kwargs["query"] = {}
         return wrapper(**kwargs)
-    raise APIError("not_found", f"endpoint {service}.{endpoint} introuvable")
+    raise APIError("not_found", f"endpoint {service}.{endpoint} not found")
 
 
-# --- mode déployé : HTTP signé sur la route interne ---
+# --- deployed mode: signed HTTP on the internal route ---
 
 
 def _sign(
     secret: str, date: str, caller: str, endpoint: str, payload: bytes, auth_data: bytes
 ) -> str:
-    # auth_data (= en-tête x-vignemale-auth-data) inclus dans la signature, comme
-    # Encore lie l'identité propagée : empêche d'usurper une identité a posteriori.
+    # auth_data (= x-vignemale-auth-data header) included in the signature, the
+    # way Encore binds the propagated identity: prevents forging an identity
+    # after the fact.
     body_hash = hashlib.sha256(payload).hexdigest()
     auth_hash = hashlib.sha256(auth_data).hexdigest()
     msg = f"{date}\n{caller}\n{endpoint}\n{body_hash}\n{auth_hash}"
@@ -93,7 +94,7 @@ def _sign(
 
 
 def _child_traceparent(ctx: dict) -> str:
-    """Propage le trace-id entrant avec un nouveau span-id (W3C)."""
+    """Propagates the incoming trace-id with a new span-id (W3C)."""
     incoming = ctx.get("traceparent") or ""
     parts = incoming.split("-")
     trace_id = parts[1] if len(parts) >= 4 and len(parts[1]) == 32 else pysecrets.token_hex(16)
@@ -105,7 +106,7 @@ def _call_http(base_url: str, service: str, endpoint: str, body, params):
     if not secret:
         raise APIError(
             "internal",
-            "VIGNEMALE_SERVICE_SECRET requis pour les appels inter-services",
+            "VIGNEMALE_SERVICE_SECRET required for inter-service calls",
         )
     if body is not None and hasattr(body, "model_dump"):
         body = body.model_dump()
@@ -115,7 +116,7 @@ def _call_http(base_url: str, service: str, endpoint: str, body, params):
     caller = os.environ.get("VIGNEMALE_SERVICE_NAME", "unknown")
     date = str(int(time.time()))
     ctx = _request_ctx.get() or {}
-    # l'identité propagée doit être signée à l'identique de l'en-tête (vide si absente)
+    # the propagated identity must be signed exactly as the header (empty if absent)
     auth_data = json.dumps(ctx["auth"]) if ctx.get("auth") is not None else ""
     headers = {
         "content-type": "application/json",
@@ -128,7 +129,7 @@ def _call_http(base_url: str, service: str, endpoint: str, body, params):
     }
     if auth_data:
         headers["x-vignemale-auth-data"] = auth_data
-    # pair privé (topologie services) : token d'invocation Scaleway
+    # private peer (services topology): Scaleway invocation token
     token = os.environ.get("VIGNEMALE_CONTAINER_TOKEN")
     if token:
         headers["X-Auth-Token"] = token
@@ -146,8 +147,8 @@ def _call_http(base_url: str, service: str, endpoint: str, body, params):
                 err.get("code", "internal"), err.get("message", "?"), err.get("details")
             ) from None
         except (ValueError, KeyError):
-            raise APIError("internal", f"appel {service}.{endpoint}: HTTP {e.code}") from None
+            raise APIError("internal", f"call {service}.{endpoint}: HTTP {e.code}") from None
     except urllib.error.URLError as e:
         raise APIError(
-            "unavailable", f"service {service} injoignable: {e.reason}"
+            "unavailable", f"service {service} unreachable: {e.reason}"
         ) from None

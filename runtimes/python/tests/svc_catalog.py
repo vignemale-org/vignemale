@@ -1,4 +1,4 @@
-"""Service `catalog` seul — pour les tests d'appels inter-services (HTTP)."""
+"""The `catalog` service alone — for service-to-service call tests (HTTP)."""
 
 from vignemale import Service, api, auth_handler
 

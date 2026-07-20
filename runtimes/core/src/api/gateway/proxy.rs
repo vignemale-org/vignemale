@@ -1,5 +1,5 @@
-// Le handler de proxy : auth à l'edge → forward signé svcauth → réponse
-// streamée. Tout le trafic public passe ici (route fallback de la gateway).
+// The proxy handler: auth at the edge -> svcauth-signed forward -> streamed
+// response. All public traffic goes through here (the gateway's fallback route).
 
 use std::sync::Arc;
 
@@ -29,10 +29,10 @@ pub(crate) async fn handle(
     let err = |status: u16, code: &str, msg: &str| reply(status, error_json(code, msg, None), &request_id);
 
     let Some(route) = pick_route(&st.routes, &path) else {
-        return err(404, "not_found", "aucun service pour ce chemin");
+        return err(404, "not_found", "no service for this path");
     };
 
-    // 1) auth à l'edge
+    // 1) auth at the edge
     let mut auth_data: Option<String> = None;
     if route.requires_auth {
         match super::super::server::run_auth_pub(&st.auth, &headers, &query).await {
@@ -44,12 +44,12 @@ pub(crate) async fn handle(
         }
     }
 
-    // 2) forward signé vers le service backend
+    // 2) signed forward to the backend service
     let Some(secret) = &st.secret else {
-        return err(500, "internal", "VIGNEMALE_SERVICE_SECRET requis pour la gateway");
+        return err(500, "internal", "VIGNEMALE_SERVICE_SECRET required for the gateway");
     };
     let date = svcauth::now_epoch().to_string();
-    // l'identité propagée est signée à l'identique de l'en-tête (vide si absente)
+    // the propagated identity is signed exactly as the header (empty if absent)
     let sig = svcauth::sign(
         secret,
         &date,
@@ -76,7 +76,7 @@ pub(crate) async fn handle(
     if let Some(data) = &auth_data {
         req = req.header("x-vignemale-auth-data", data);
     }
-    // backends privés : token d'invocation Scaleway (sinon 403 à l'edge cloud)
+    // private backends: Scaleway invocation token (otherwise 403 at the cloud edge)
     if let Some(token) = &st.container_token {
         req = req.header("X-Auth-Token", token);
     }
@@ -100,12 +100,12 @@ pub(crate) async fn handle(
             builder
                 .header("x-vignemale-request-id", &request_id)
                 .body(Body::from_stream(resp.bytes_stream()))
-                .unwrap_or_else(|_| reply(502, error_json("unavailable", "réponse upstream invalide", None), &request_id))
+                .unwrap_or_else(|_| reply(502, error_json("unavailable", "invalid upstream response", None), &request_id))
         }
         Err(e) => {
             log_routed(&route.service, &method, &path, 502, started, &request_id, &trace_id);
-            tracing::error!(target: "vignemale::gateway", service = %route.service, error = %e, "upstream injoignable");
-            err(502, "unavailable", &format!("service {} injoignable", route.service))
+            tracing::error!(target: "vignemale::gateway", service = %route.service, error = %e, "upstream unreachable");
+            err(502, "unavailable", &format!("service {} unreachable", route.service))
         }
     }
 }
@@ -146,6 +146,6 @@ fn log_routed(
         service, method = %method, path, status,
         duration_ms = started.elapsed().as_millis() as u64,
         request_id, trace_id,
-        "requête routée"
+        "request routed"
     );
 }

@@ -1,14 +1,14 @@
 name: Runtime image
 
-# Construit et publie l'image de base Vignemale (runtime déjà compilé) sur GHCR,
-# multi-arch. `vignemale build` en part → builds d'app en quelques secondes.
+# Builds and publishes the Vignemale base image (runtime already compiled) to
+# GHCR, multi-arch. `vignemale build` starts from it → app builds in a few seconds.
 #
-# Déclenchée sur tag de version (vX.Y.Z) et manuellement. Pas sur chaque push :
-# une compilation Rust par release suffit.
+# Triggered on a version tag (vX.Y.Z) and manually. Not on every push:
+# one Rust compilation per release is enough.
 #
-# Parallélisation : un job par plateforme (amd64 / arm64) qui pousse PAR DIGEST,
-# puis un job `merge` qui assemble le manifeste multi-arch. Les deux builds
-# tournent en même temps → temps mur ≈ le plus lent, pas la somme.
+# Parallelization: one job per platform (amd64 / arm64) that pushes BY DIGEST,
+# then a `merge` job that assembles the multi-arch manifest. Both builds run at
+# the same time → wall time ≈ the slowest, not the sum.
 
 on:
   push:
@@ -27,19 +27,19 @@ jobs:
         include:
           - platform: linux/amd64
             runner: ubuntu-latest
-          # arm64 DÉSACTIVÉ : en QEMU émulé sur runner amd64, la compilation Rust
-          # fat-LTO prend >1h (impraticable). Scaleway = amd64, donc inutile pour
-          # le deploy. Pour le rebrancher (dev local Mac arm64), utiliser un runner
-          # ARM NATIF — décommenter quand le plan GitHub en dispose :
+          # arm64 DISABLED: under emulated QEMU on an amd64 runner, the fat-LTO
+          # Rust compilation takes >1h (impractical). Scaleway = amd64, so useless
+          # for the deploy. To wire it back (local dev on Mac arm64), use a NATIVE
+          # ARM runner — uncomment when the GitHub plan provides one:
           # - platform: linux/arm64
           #   runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
 
-      - name: Nom d'image (GHCR exige des minuscules)
+      - name: Image name (GHCR requires lowercase)
         run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/vignemale-python" >> "$GITHUB_ENV"
 
-      - name: Clé de plateforme (cache / artefact)
+      - name: Platform key (cache / artifact)
         run: echo "PLATFORM_KEY=${MATRIX_PLATFORM//\//-}" >> "$GITHUB_ENV"
         env:
           MATRIX_PLATFORM: ${{ matrix.platform }}
@@ -63,7 +63,7 @@ jobs:
           cache-from: type=gha,scope=${{ env.PLATFORM_KEY }}
           cache-to: type=gha,mode=max,scope=${{ env.PLATFORM_KEY }}
 
-      - name: Exporte le digest
+      - name: Export the digest
         run: |
           mkdir -p /tmp/digests
           digest="${{ steps.build.outputs.digest }}"
@@ -83,7 +83,7 @@ jobs:
       contents: read
       packages: write
     steps:
-      - name: Nom d'image (GHCR exige des minuscules)
+      - name: Image name (GHCR requires lowercase)
         run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/vignemale-python" >> "$GITHUB_ENV"
 
       - uses: actions/download-artifact@v4
@@ -108,12 +108,12 @@ jobs:
             type=ref,event=tag
             type=raw,value=latest
 
-      - name: Assemble le manifeste multi-arch et pousse
+      - name: Assemble the multi-arch manifest and push
         working-directory: /tmp/digests
         run: |
           docker buildx imagetools create \
             $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
             $(printf '${{ env.IMAGE }}@sha256:%s ' *)
 
-      - name: Vérifie
+      - name: Verify
         run: docker buildx imagetools inspect ${{ env.IMAGE }}:latest

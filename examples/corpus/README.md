@@ -1,53 +1,53 @@
-# Corpus — RAG d'entreprise avec permissions
+# Corpus — enterprise RAG with permissions
 
-Le cas « plateforme documentaire » complet (façon back unifié d'entreprise) :
-**utilisateurs et groupes**, **knowledge bases partagées**, **indexation de
-documents** (PDF via pypdf, ou texte) découpés/embeddés dans **pgvector**, et
-un **RAG dont la recherche vectorielle est filtrée par les permissions** —
-le filtre d'accès est dans le `WHERE` SQL, pas après coup.
+The full "document platform" case (like a unified enterprise backend):
+**users and groups**, **shared knowledge bases**, **document indexing**
+(PDF via pypdf, or text) split/embedded into **pgvector**, and a
+**RAG whose vector search is filtered by permissions** —
+the access filter lives in the SQL `WHERE`, not after the fact.
 
 ```
 corpus/
-├── embedding.py      embeddings (hash bag-of-words hors-ligne — brancher un vrai modèle ici)
-├── users/            comptes (PII, RGPD), groupes, auth handler
-├── kb/               knowledge bases, partage par groupe, indexation, recherche vectorielle
-└── rag/              /search et /ask (streamé) — délègue à kb, auth propagée
+├── embedding.py      embeddings (offline hash bag-of-words — plug a real model in here)
+├── users/            accounts (PII, GDPR), groups, auth handler
+├── kb/               knowledge bases, group sharing, indexing, vector search
+└── rag/              /search and /ask (streamed) — delegates to kb, auth propagated
 ```
 
-## Lancer (zéro config — le Postgres local inclut pgvector)
+## Run (zero config — the local Postgres includes pgvector)
 
 ```bash
 vignemale run examples/corpus
 ```
 
-## Le scénario
+## The scenario
 
 ```bash
-# comptes
+# accounts
 TA=$(curl -s -X POST :8080/signup -d '{"email":"alice@ex.fr","name":"Alice"}' | jq -r .token)
 TB=$(curl -s -X POST :8080/signup -d '{"email":"bob@ex.fr","name":"Bob"}' | jq -r .token)
 
-# groupe marketing (alice), bob y entre
+# marketing group (alice), bob joins it
 curl -X POST -H "Authorization: Bearer $TA" :8080/groups -d '{"name":"marketing"}'
 curl -X POST -H "Authorization: Bearer $TA" :8080/groups/1/members -d '{"email":"bob@ex.fr"}'
 
-# deux KB : une partagée au groupe, une privée
+# two KBs: one shared with the group, one private
 curl -X POST -H "Authorization: Bearer $TA" :8080/kbs -d '{"name":"docs-marketing"}'
-curl -X POST -H "Authorization: Bearer $TA" :8080/kbs -d '{"name":"confidentiel"}'
+curl -X POST -H "Authorization: Bearer $TA" :8080/kbs -d '{"name":"confidential"}'
 curl -X POST -H "Authorization: Bearer $TA" :8080/kbs/1/grant -d '{"group_id":1}'
 
-# indexer un document (texte ou PDF, base64)
+# index a document (text or PDF, base64)
 curl -X POST -H "Authorization: Bearer $TA" :8080/kbs/1/documents \
-     -d "{\"filename\":\"tarifs.txt\",\"content_b64\":\"$(base64 < tarifs.txt)\"}"
+     -d "{\"filename\":\"pricing.txt\",\"content_b64\":\"$(base64 < pricing.txt)\"}"
 
-# le RAG respecte les permissions :
-curl -X POST -H "Authorization: Bearer $TB" :8080/search -d '{"query":"salaires direction"}'
-#  → bob ne touche JAMAIS la KB « confidentiel » — le filtre est dans la requête vectorielle
+# the RAG respects permissions:
+curl -X POST -H "Authorization: Bearer $TB" :8080/search -d '{"query":"management salaries"}'
+#  → bob NEVER touches the "confidential" KB — the filter is in the vector query
 
-# réponse streamée, sources citées
-curl -N -X POST ":8080/ask?token=$TB" -d '{"query":"combien coûte le BTS ?"}'
+# streamed reply, cited sources
+curl -N -X POST ":8080/ask?token=$TB" -d '{"query":"how much does the BTS cost?"}'
 ```
 
-Et l'outillage habituel marche sur l'app : `vignemale check --sql`,
-`vignemale gen` (les clients typés sont committés), `vignemale rgpd map`
-(les emails sont tagués PII).
+And the usual tooling works on the app: `vignemale check --sql`,
+`vignemale gen` (the typed clients are committed), `vignemale gdpr map`
+(the emails are tagged PII).

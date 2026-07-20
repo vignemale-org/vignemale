@@ -1,24 +1,24 @@
-"""Clients de services, façon Encore : on importe le service, on l'appelle.
+"""Service clients, Encore style: import the service, call it.
 
     from vignemale.clients import catalog
 
     item = catalog.get_item(id=7)
     order = orders.create_order(body=NewOrder(item_id=7))
 
-Chaque attribut de ce module est un client du service du même nom ; chaque
-méthode appelle l'endpoint du même nom. C'est du sucre au-dessus de
-`vignemale.call` : appel direct en local, HTTP signé une fois déployé,
-propagation auth + trace — même code partout.
+Each attribute of this module is a client for the service of the same name;
+each method calls the endpoint of the same name. It is sugar on top of
+`vignemale.call`: direct call locally, signed HTTP once deployed,
+auth + trace propagation — same code everywhere.
 
-(Les stubs typés générés depuis le meta — pour l'autocomplétion pyright —
-viendront avec `vignemale gen`.)
+(The typed stubs generated from the meta — for pyright autocompletion —
+will come with `vignemale gen`.)
 """
 
 from .call import call
 
 
 class ServiceClient:
-    """Client d'un service : `client.endpoint(body=…, **params)`."""
+    """Client for a service: `client.endpoint(body=…, **params)`."""
 
     def __init__(self, service: str):
         self._service = service

@@ -1,24 +1,24 @@
-"""RGPD outillé — parce que le schéma (vignemale.model) connaît les données.
+"""Tooled GDPR — because the schema (vignemale.model) knows the data.
 
-Trois opérations, à la CLI (`vignemale rgpd …`) ou en Python :
+Three operations, from the CLI (`vignemale gdpr …`) or in Python:
 
-- **map** : la carte des données personnelles (table, champ, finalité,
-  rattachement à la personne) — l'artefact à donner au juriste ;
-- **export** : toutes les données d'UNE personne, en JSON (droit d'accès /
-  portabilité, art. 15 & 20) ;
-- **forget** : effacement (art. 17) — par table, `__on_forget__` décide :
-  `delete` (la ligne disparaît) ou `anonymize` (les champs PII sont
-  caviardés, la ligne reste pour les stats).
+- **map**: the map of personal data (table, field, purpose,
+  link to the subject) — the artifact to hand to your legal counsel;
+- **export**: all the data of ONE person, in JSON (right of access /
+  portability, art. 15 & 20);
+- **forget**: erasure (art. 17) — per table, `__on_forget__` decides:
+  `delete` (the row disappears) or `anonymize` (the PII fields are
+  redacted, the row stays for stats).
 
-⚠️ On fournit des **preuves et des mécanismes**, pas une garantie de
-conformité juridique — l'humain (DPO/juriste) valide.
+Warning: we provide **evidence and mechanisms**, not a guarantee of
+legal compliance — a human (DPO/legal counsel) validates.
 """
 
 from . import datamodel as _model
 
 
 def data_map() -> list:
-    """Inventaire des tables déclarées et de leurs données personnelles."""
+    """Inventory of the declared tables and their personal data."""
     out = []
     for t in _model._tables:
         fields = []
@@ -50,7 +50,7 @@ def _subject_tables():
 
 
 def export_subject(subject_id) -> dict:
-    """Toutes les données rattachées à une personne, table par table."""
+    """All the data linked to a person, table by table."""
     out = {}
     for t in _subject_tables():
         rows = t.find(**{t.__subject__: subject_id})
@@ -60,10 +60,10 @@ def export_subject(subject_id) -> dict:
 
 
 def forget_subject(subject_id, dry_run: bool = False) -> dict:
-    """Efface (ou anonymise) les données d'une personne. Renvoie le bilan.
+    """Erases (or anonymizes) a person's data. Returns the summary.
 
-    Les tables sont traitées dans l'ordre inverse de déclaration (les enfants
-    d'abord, par convention parents-déclarés-d'abord).
+    Tables are processed in reverse declaration order (children
+    first, by the parents-declared-first convention).
     """
     report = {}
     for t in reversed(_subject_tables()):
@@ -82,12 +82,12 @@ def forget_subject(subject_id, dry_run: bool = False) -> dict:
 
 
 def _anonymize(t, where: dict) -> None:
-    """Caviarde les champs PII (str → '[effacé]', sinon NULL), la ligne reste."""
+    """Redacts the PII fields (str → '[redacted]', otherwise NULL), the row stays."""
     pii = t.pii_fields()
     if not pii:
         return
     values = {}
     for name in pii:
         base, _ = _model._unwrap(t.model_fields[name].annotation)
-        values[name] = "[effacé]" if base is str else None
+        values[name] = "[redacted]" if base is str else None
     t.update_where(values, **where)

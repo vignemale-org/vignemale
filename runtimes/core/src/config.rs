@@ -1,10 +1,10 @@
-// Chargement de la config depuis l'environnement.
-// Porté de `encore/runtimes/core/src/lib.rs` (fonctions *_from_env), rebrandé.
+// Loading the config from the environment.
+// Ported from `encore/runtimes/core/src/lib.rs` (the *_from_env functions), rebranded.
 //
-// Pour l'instant : chemin **protobuf binaire** uniquement (var d'env, base64,
-// gzip optionnel) + fichier. Le chemin JSON lisible (`infracfg.rs`, le gros
-// mapping infra → runtime) sera porté ensuite. `enable_test_mode` (qui shell-out
-// vers le CLI) est volontairement laissé de côté.
+// For now: the **binary protobuf** path only (env var, base64, optional
+// gzip) + file. The human-readable JSON path (`infracfg.rs`, the large
+// infra → runtime mapping) will be ported later. `enable_test_mode` (which
+// shells out to the CLI) is deliberately left out.
 
 use std::fmt::Display;
 use std::io::Read;
@@ -40,8 +40,8 @@ impl Display for ParseError {
 
 impl std::error::Error for ParseError {}
 
-/// Charge la `RuntimeConfig` depuis `VIGNEMALE_RUNTIME_CONFIG` (base64, gzip
-/// optionnel) ou depuis le fichier pointé par `VIGNEMALE_RUNTIME_CONFIG_PATH`.
+/// Loads the `RuntimeConfig` from `VIGNEMALE_RUNTIME_CONFIG` (base64, optional
+/// gzip) or from the file pointed to by `VIGNEMALE_RUNTIME_CONFIG_PATH`.
 pub fn runtime_config_from_env() -> Result<runtimepb::RuntimeConfig, ParseError> {
     let cfg = match std::env::var("VIGNEMALE_RUNTIME_CONFIG") {
         Ok(cfg) => cfg,
@@ -84,8 +84,8 @@ fn parse_runtime_config(path: &Path) -> Result<runtimepb::RuntimeConfig, ParseEr
     runtimepb::RuntimeConfig::decode(&data[..]).map_err(ParseError::Proto)
 }
 
-/// Charge les métadonnées d'app (`Data`) depuis `VIGNEMALE_APP_META` (base64,
-/// gzip optionnel) ou le fichier `VIGNEMALE_APP_META_PATH`.
+/// Loads the app metadata (`Data`) from `VIGNEMALE_APP_META` (base64,
+/// optional gzip) or the `VIGNEMALE_APP_META_PATH` file.
 pub fn meta_from_env() -> Result<metapb::Data, ParseError> {
     let cfg = match std::env::var("VIGNEMALE_APP_META") {
         Ok(cfg) => cfg,
@@ -133,8 +133,8 @@ mod tests {
     use super::*;
     use std::sync::Mutex;
 
-    // Les tests manipulent les mêmes variables d'environnement (état process) :
-    // on les sérialise pour éviter les courses entre threads de test.
+    // The tests manipulate the same environment variables (process state):
+    // we serialize them to avoid races between test threads.
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn demo_cfg() -> runtimepb::RuntimeConfig {
@@ -211,7 +211,7 @@ mod tests {
     fn invalid_base64_rejected() {
         let _g = ENV_LOCK.lock().unwrap();
         clear_env();
-        std::env::set_var("VIGNEMALE_RUNTIME_CONFIG", "%%% pas du base64 %%%");
+        std::env::set_var("VIGNEMALE_RUNTIME_CONFIG", "%%% not base64 %%%");
         assert!(matches!(
             runtime_config_from_env(),
             Err(ParseError::Base64(_))
@@ -220,8 +220,8 @@ mod tests {
     }
 }
 
-/// Charge l'éventuelle `ProcessConfig` depuis `VIGNEMALE_PROCESS_CONFIG`
-/// (base64 d'un JSON).
+/// Loads the optional `ProcessConfig` from `VIGNEMALE_PROCESS_CONFIG`
+/// (base64 of a JSON document).
 pub fn proc_config_from_env() -> Result<Option<proccfg::ProcessConfig>, ParseError> {
     let encoded_config = match std::env::var("VIGNEMALE_PROCESS_CONFIG") {
         Ok(config) => config,

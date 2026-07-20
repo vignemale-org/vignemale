@@ -1,17 +1,17 @@
-"""Exemple « vrai projet » : une API todo avec Postgres, logs structurés et erreurs.
+"""A "real project" example: a todo API with Postgres, structured logs and errors.
 
-Tout Vignemale en un fichier : `SQLDatabase` (le code DÉCLARE la base — au
-`run`, Vignemale provisionne le Postgres local tout seul), `@api` typé
-Pydantic, `HTTPError`, `log`. Zéro configuration :
+All of Vignemale in one file: `SQLDatabase` (the code DECLARES the database — on
+`run`, Vignemale provisions the local Postgres on its own), Pydantic-typed
+`@api`, `HTTPError`, `log`. Zero configuration:
 
-    vignemale run examples/todo.py      # docker + base + DSN : automatique
+    vignemale run examples/todo.py      # docker + database + DSN: automatic
 
-    curl -X POST 127.0.0.1:8080/todos -d '{"title":"acheter du pain"}'
+    curl -X POST 127.0.0.1:8080/todos -d '{"title":"buy bread"}'
     curl 127.0.0.1:8080/todos
     curl -X POST 127.0.0.1:8080/todos/1/done
 
-(En prod, le même code pointera vers une base managée : le DSN posé dans
-l'environnement — VIGNEMALE_SQLDB_TODO — a priorité sur le local.)
+(In production, the same code will point to a managed database: the DSN set in
+the environment — VIGNEMALE_SQLDB_TODO — takes priority over the local one.)
 """
 
 from pydantic import BaseModel
@@ -47,7 +47,7 @@ def create_todo(body: NewTodo) -> Todo:
         "INSERT INTO todos (title) VALUES ($1) RETURNING id, title, done",
         body.title,
     )
-    log.info("todo créé", todo_id=row["id"], title=row["title"])
+    log.info("todo created", todo_id=row["id"], title=row["title"])
     return Todo(**row)
 
 
@@ -60,7 +60,7 @@ def list_todos() -> dict:
 def get_todo(id) -> Todo:
     row = db.query_row("SELECT id, title, done FROM todos WHERE id = $1", int(id))
     if row is None:
-        raise HTTPError(404, f"todo {id} introuvable")
+        raise HTTPError(404, f"todo {id} not found")
     return Todo(**row)
 
 
@@ -71,8 +71,8 @@ def complete_todo(id) -> Todo:
         int(id),
     )
     if row is None:
-        raise HTTPError(404, f"todo {id} introuvable")
-    log.info("todo terminé", todo_id=row["id"])
+        raise HTTPError(404, f"todo {id} not found")
+    log.info("todo completed", todo_id=row["id"])
     return Todo(**row)
 
 

@@ -1,15 +1,15 @@
-"""Exemple Vignemale — un agent **Pydantic AI** déployé tel quel, exposé en streaming.
+"""Vignemale example — a **Pydantic AI** agent deployed as-is, exposed via streaming.
 
-Le point clé : Vignemale ne réimplémente AUCUNE logique d'agent. Tu écris ton agent
-avec le framework que tu veux (ici Pydantic AI) ; Vignemale l'expose en HTTP + SSE.
+The key point: Vignemale reimplements NO agent logic. You write your agent
+with whatever framework you want (here Pydantic AI); Vignemale exposes it over HTTP + SSE.
 
-Sans clé API → `TestModel` (réponse simulée, pour voir le streaming).
-Avec `ANTHROPIC_API_KEY` → un vrai modèle Claude qui stream token par token.
+Without an API key → `TestModel` (simulated reply, to see the streaming).
+With `ANTHROPIC_API_KEY` → a real Claude model streaming token by token.
 
     cd vignemale/runtimes/python && source .venv/bin/activate
     pip install pydantic-ai-slim
     python ../../examples/agent.py
-    curl -N -X POST 127.0.0.1:8080/chat -d '{"prompt":"présente-toi"}'
+    curl -N -X POST 127.0.0.1:8080/chat -d '{"prompt":"introduce yourself"}'
 """
 
 import asyncio
@@ -19,16 +19,16 @@ from vignemale.api import api, serve
 from pydantic_ai import Agent
 
 if os.environ.get("ANTHROPIC_API_KEY"):
-    agent = Agent("anthropic:claude-sonnet-4-6", system_prompt="Tu es concis et utile.")
+    agent = Agent("anthropic:claude-sonnet-4-6", system_prompt="You are concise and helpful.")
 else:
     from pydantic_ai.models.test import TestModel
 
     agent = Agent(
         TestModel(
             custom_output_text=(
-                "Bonjour ! Je suis un agent Pydantic AI, servi par Vignemale. "
-                "Vignemale ne gère pas ma logique : il m'expose en HTTP, me streame "
-                "token par token, et me déploiera sur Scaleway. C'est tout — et c'est le but."
+                "Hello! I am a Pydantic AI agent, served by Vignemale. "
+                "Vignemale does not handle my logic: it exposes me over HTTP, streams me "
+                "token by token, and will deploy me on Scaleway. That's all — and that's the point."
             )
         )
     )
@@ -41,8 +41,8 @@ def health():
 
 @api(method="POST", path="/chat", stream=True)
 def chat(stream, body=None):
-    # Vignemale fournit `stream` ; le reste, c'est 100 % le framework de l'utilisateur.
-    prompt = (body or {}).get("prompt", "présente-toi")
+    # Vignemale provides `stream`; the rest is 100% the user's framework.
+    prompt = (body or {}).get("prompt", "introduce yourself")
     asyncio.run(_run(prompt, stream))
 
 

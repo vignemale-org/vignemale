@@ -1,8 +1,8 @@
-// ORM côté CORE : le SDK (Python, demain JS…) envoie un DESCRIPTEUR de table
-// (JSON) et des opérations logiques ; tout le SQL est généré ICI, par
-// **sea-query** (le builder sous SeaORM — dynamique à l'exécution, quoting et
-// placeholders éprouvés). Les SDKs restent des façades déclaratives :
-// ajouter un langage n'ajoute pas un deuxième ORM.
+// ORM on the CORE side: the SDK (Python, tomorrow JS…) sends a table DESCRIPTOR
+// (JSON) and logical operations; all the SQL is generated HERE, by
+// **sea-query** (the builder under SeaORM — dynamic at runtime, with proven
+// quoting and placeholders). The SDKs stay declarative facades:
+// adding a language does not add a second ORM.
 
 use deadpool_postgres::Pool;
 use sea_query::{
@@ -16,7 +16,7 @@ use super::val::SqlParam;
 #[derive(Debug, Deserialize)]
 pub struct ColumnSpec {
     pub name: String,
-    /// Type logique : int | str | bool | float | datetime | date | json
+    /// Logical type: int | str | bool | float | datetime | date | json
     pub typ: String,
     #[serde(default)]
     pub nullable: bool,
@@ -31,19 +31,19 @@ pub struct TableSchema {
 }
 
 impl TableSchema {
-    /// Whitelist : seules les colonnes du schéma sont adressables.
+    /// Whitelist: only the schema's columns are addressable.
     fn column(&self, name: &str) -> anyhow::Result<&ColumnSpec> {
         self.columns
             .iter()
             .find(|c| c.name == name)
-            .ok_or_else(|| anyhow::anyhow!("colonne inconnue: {name} (table {})", self.table))
+            .ok_or_else(|| anyhow::anyhow!("unknown column: {name} (table {})", self.table))
     }
 
     fn pk(&self) -> anyhow::Result<&ColumnSpec> {
         self.columns
             .iter()
             .find(|c| c.primary_key)
-            .ok_or_else(|| anyhow::anyhow!("table {} sans clé primaire", self.table))
+            .ok_or_else(|| anyhow::anyhow!("table {} has no primary key", self.table))
     }
 
     fn alias(&self) -> Alias {
@@ -51,7 +51,7 @@ impl TableSchema {
     }
 }
 
-/// JSON → valeur sea-query (qui génère le placeholder).
+/// JSON → sea-query value (which generates the placeholder).
 fn to_value(v: &serde_json::Value) -> sea_query::Value {
     use serde_json::Value as J;
     match v {
@@ -66,8 +66,8 @@ fn to_value(v: &serde_json::Value) -> sea_query::Value {
     }
 }
 
-/// Valeurs sea-query → nos paramètres de bind (coercions val.rs au moment
-/// de l'exécution : NUMERIC, dates, uuid…).
+/// sea-query values → our bind parameters (val.rs coercions at
+/// execution time: NUMERIC, dates, uuid…).
 fn to_params(values: sea_query::Values) -> Vec<SqlParam> {
     use sea_query::Value as V;
     values
@@ -101,7 +101,7 @@ fn column_def(c: &ColumnSpec) -> anyhow::Result<ColumnDef> {
         "datetime" => def.timestamp_with_time_zone(),
         "date" => def.date(),
         "json" => def.json_binary(),
-        other => anyhow::bail!("type logique inconnu: {other:?}"),
+        other => anyhow::bail!("unknown logical type: {other:?}"),
     };
     if !c.nullable {
         def.not_null();
@@ -111,7 +111,7 @@ fn column_def(c: &ColumnSpec) -> anyhow::Result<ColumnDef> {
 
 type JsonMap = serde_json::Map<String, serde_json::Value>;
 
-/// Applique les égalités du `where` (clés validées contre le schéma).
+/// Applies the `where` equalities (keys validated against the schema).
 fn apply_where<S: sea_query::ConditionalStatement>(
     stmt: &mut S,
     schema: &TableSchema,
@@ -142,7 +142,7 @@ async fn run_execute(
     execute(pool, &built.0, to_params(built.1)).await
 }
 
-/// Crée la table si besoin + migration additive (colonnes manquantes).
+/// Creates the table if needed + additive migration (missing columns).
 pub async fn ensure(pool: &Pool, schema: &TableSchema) -> anyhow::Result<()> {
     let mut create = Table::create();
     create.table(schema.alias()).if_not_exists();
@@ -168,7 +168,7 @@ pub async fn ensure(pool: &Pool, schema: &TableSchema) -> anyhow::Result<()> {
     for c in &schema.columns {
         if !existing.contains(&c.name.as_str()) {
             let mut def = column_def(c)?;
-            def.null(); // additive : pas de NOT NULL sur les lignes existantes
+            def.null(); // additive: no NOT NULL on existing rows
             let mut alter = Table::alter();
             alter.table(schema.alias()).add_column(&mut def);
             execute(pool, &alter.build(PostgresQueryBuilder), vec![]).await?;
@@ -184,7 +184,7 @@ fn first_row(rows: serde_json::Value) -> serde_json::Value {
         .unwrap_or(serde_json::Value::Null)
 }
 
-/// INSERT … RETURNING * → la ligne créée.
+/// INSERT … RETURNING * → the created row.
 pub async fn insert(
     pool: &Pool,
     schema: &TableSchema,
@@ -207,7 +207,7 @@ pub async fn insert(
     Ok(first_row(run_query(pool, stmt.build(PostgresQueryBuilder)).await?))
 }
 
-/// SELECT par clé primaire → la ligne, ou null.
+/// SELECT by primary key → the row, or null.
 pub async fn get(
     pool: &Pool,
     schema: &TableSchema,
@@ -221,7 +221,7 @@ pub async fn get(
     Ok(first_row(run_query(pool, stmt.build(PostgresQueryBuilder)).await?))
 }
 
-/// SELECT par égalités → tableau de lignes (ordonné par clé primaire).
+/// SELECT by equalities → array of rows (ordered by primary key).
 pub async fn find(
     pool: &Pool,
     schema: &TableSchema,
@@ -245,7 +245,7 @@ pub async fn count(pool: &Pool, schema: &TableSchema, where_: &JsonMap) -> anyho
     Ok(first_row(rows).get("n").and_then(|v| v.as_u64()).unwrap_or(0))
 }
 
-/// UPDATE par clé primaire.
+/// UPDATE by primary key.
 pub async fn update(
     pool: &Pool,
     schema: &TableSchema,
@@ -265,7 +265,7 @@ pub async fn update(
     run_execute(pool, stmt.build(PostgresQueryBuilder)).await
 }
 
-/// UPDATE … WHERE égalités (utilisé par l'anonymisation RGPD).
+/// UPDATE … WHERE equalities (used by GDPR anonymization).
 pub async fn update_where(
     pool: &Pool,
     schema: &TableSchema,
@@ -276,7 +276,7 @@ pub async fn update_where(
         return Ok(0);
     }
     if where_.is_empty() {
-        anyhow::bail!("update_where exige au moins un critère");
+        anyhow::bail!("update_where requires at least one criterion");
     }
     let mut stmt = Query::update();
     stmt.table(schema.alias());
@@ -287,7 +287,7 @@ pub async fn update_where(
     run_execute(pool, stmt.build(PostgresQueryBuilder)).await
 }
 
-/// DELETE par clé primaire.
+/// DELETE by primary key.
 pub async fn delete(
     pool: &Pool,
     schema: &TableSchema,
@@ -300,14 +300,14 @@ pub async fn delete(
     run_execute(pool, stmt.build(PostgresQueryBuilder)).await
 }
 
-/// DELETE … WHERE égalités (critère obligatoire).
+/// DELETE … WHERE equalities (criterion required).
 pub async fn delete_where(
     pool: &Pool,
     schema: &TableSchema,
     where_: &JsonMap,
 ) -> anyhow::Result<u64> {
     if where_.is_empty() {
-        anyhow::bail!("delete_where exige au moins un critère");
+        anyhow::bail!("delete_where requires at least one criterion");
     }
     let mut stmt = Query::delete();
     stmt.from_table(schema.alias());
@@ -335,7 +335,7 @@ mod tests {
     fn schema_rejects_unknown_column() {
         let s = schema();
         assert!(s.column("email").is_ok());
-        assert!(s.column("nexiste_pas").is_err());
+        assert!(s.column("does_not_exist").is_err());
     }
 
     #[test]

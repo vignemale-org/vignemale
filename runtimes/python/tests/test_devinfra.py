@@ -1,5 +1,5 @@
-"""Provisioning local zéro-config : `vignemale run` sur une app qui déclare
-une `SQLDatabase` démarre le Postgres Docker partagé et pose le DSN tout seul."""
+"""Zero-config local provisioning: `vignemale run` on an app that declares
+a `SQLDatabase` starts the shared Docker Postgres and sets the DSN on its own."""
 
 import json
 import os
@@ -23,14 +23,14 @@ def docker_ready() -> bool:
 
 
 needs_docker = pytest.mark.skipif(
-    not docker_ready(), reason="docker indisponible (requis pour le provisioning local)"
+    not docker_ready(), reason="docker unavailable (required for local provisioning)"
 )
 
 
 @needs_docker
 def test_run_provisions_database_automatically():
     addr = f"127.0.0.1:{free_port()}"
-    # environnement vierge : aucun DSN — c'est Vignemale qui doit le poser
+    # clean environment: no DSN — Vignemale must set it
     env = {k: v for k, v in os.environ.items() if not k.startswith("VIGNEMALE_SQLDB")}
     proc = subprocess.Popen(
         [
@@ -48,12 +48,12 @@ def test_run_provisions_database_automatically():
         text=True,
     )
     try:
-        # large timeout : premier lancement = pull de l'image + init du cluster
+        # generous timeout: first launch = image pull + cluster init
         deadline = time.time() + 180
         ready = False
         while time.time() < deadline:
             if proc.poll() is not None:
-                pytest.fail(f"`vignemale run` s'est arrêté (code {proc.returncode})")
+                pytest.fail(f"`vignemale run` exited (code {proc.returncode})")
             try:
                 urllib.request.urlopen(f"http://{addr}/todos", timeout=1)
                 ready = True
@@ -63,7 +63,7 @@ def test_run_provisions_database_automatically():
                 break
             except Exception:
                 time.sleep(0.5)
-        assert ready, "le serveur n'a pas démarré (provisioning compris)"
+        assert ready, "the server did not start (provisioning included)"
 
         req = urllib.request.Request(
             f"http://{addr}/todos", data=json.dumps({"title": "auto"}).encode()

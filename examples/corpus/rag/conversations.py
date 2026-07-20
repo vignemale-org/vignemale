@@ -1,13 +1,13 @@
-"""Conversations RAG persistées + agent **Pydantic AI** — un vrai agent.
+"""Persisted RAG conversations + **Pydantic AI** agent — a real agent.
 
-- L'historique de l'agent (les messages Pydantic AI, sérialisés via
-  `ModelMessagesTypeAdapter`) vit en JSONB et est rechargé à chaque tour :
-  l'agent a une **mémoire de conversation réelle**, pas un prompt reconstruit.
-- Chaque tour fait une recherche vectorielle **filtrée par les permissions**
-  (service `kb`, auth propagée) et fournit les extraits autorisés au modèle.
-- Modèle : `anthropic:claude-opus-4-8` dès que `ANTHROPIC_API_KEY` est posée
-  (`VIGNEMALE_RAG_MODEL` pour en changer) ; `TestModel` sinon (dev/CI
-  hors-ligne — c'est le double de test officiel de Pydantic AI).
+- The agent's history (the Pydantic AI messages, serialized via
+  `ModelMessagesTypeAdapter`) lives in JSONB and is reloaded on every turn:
+  the agent has a **real conversation memory**, not a rebuilt prompt.
+- Each turn runs a vector search **filtered by permissions**
+  (`kb` service, auth propagated) and feeds the authorized excerpts to the model.
+- Model: `anthropic:claude-opus-4-8` as soon as `ANTHROPIC_API_KEY` is set
+  (`VIGNEMALE_RAG_MODEL` to change it); `TestModel` otherwise (offline
+  dev/CI — it's Pydantic AI's official test double).
 """
 
 import asyncio
@@ -30,8 +30,8 @@ class Conversation(Table):
 
     id: Optional[int] = None
     user_id: int
-    title: str = PII(purpose="contenu des échanges")
-    history: list = []  # mémoire de l'agent (messages Pydantic AI sérialisés)
+    title: str = PII(purpose="content of the exchanges")
+    history: list = []  # agent memory (serialized Pydantic AI messages)
 
 
 class ChatMessage(Table):
@@ -44,7 +44,7 @@ class ChatMessage(Table):
     conversation_id: int
     user_id: int
     role: str
-    content: str = PII(purpose="contenu des échanges")
+    content: str = PII(purpose="content of the exchanges")
     sources: list = []
 
 
@@ -58,11 +58,11 @@ class Question(BaseModel):
 
 
 INSTRUCTIONS = (
-    "Tu es l'assistant documentaire de l'entreprise. Réponds UNIQUEMENT à "
-    "partir des documents fournis dans le contexte — ils sont déjà filtrés "
-    "selon les permissions de l'utilisateur. Cite tes sources entre crochets "
-    "[nom-du-fichier]. Si les documents ne permettent pas de répondre, "
-    "dis-le clairement plutôt que d'inventer."
+    "You are the company's document assistant. Answer ONLY from the "
+    "documents provided in the context — they are already filtered "
+    "according to the user's permissions. Cite your sources in brackets "
+    "[filename]. If the documents do not allow you to answer, "
+    "say so clearly rather than making things up."
 )
 
 
@@ -81,8 +81,8 @@ def build_agent():
 
         model = TestModel(
             custom_output_text=(
-                "Réponse de test, sources reçues. "
-                "(Pose ANTHROPIC_API_KEY pour un vrai modèle Claude.)"
+                "Test reply, sources received. "
+                "(Set ANTHROPIC_API_KEY for a real Claude model.)"
             )
         )
     return Agent(model, instructions=INSTRUCTIONS)
@@ -91,16 +91,16 @@ def build_agent():
 def owned(conversation_id: int, user_id) -> Conversation:
     conv = Conversation.get(conversation_id)
     if conv is None:
-        raise APIError.not_found(f"conversation {conversation_id} introuvable")
+        raise APIError.not_found(f"conversation {conversation_id} not found")
     if conv.user_id != user_id:
-        raise APIError.permission_denied("cette conversation ne t'appartient pas")
+        raise APIError.permission_denied("this conversation does not belong to you")
     return conv
 
 
 @api(method="POST", path="/conversations", auth=True)
 def create_conversation(body: NewConversation, auth) -> dict:
     conv = Conversation.create(user_id=auth["user_id"], title=body.title)
-    log.info("conversation créée", conversation_id=conv.id, user_id=auth["user_id"])
+    log.info("conversation created", conversation_id=conv.id, user_id=auth["user_id"])
     return {"id": conv.id, "title": conv.title}
 
 
@@ -138,19 +138,19 @@ def ask_in_conversation(stream, id, auth, body: Question = None):
     conv = owned(int(id), auth["user_id"])
     query = body.query if body else "?"
 
-    # RAG : recherche vectorielle filtrée par les permissions de CE user
+    # RAG: vector search filtered by THIS user's permissions
     res = kb.vector_search(body={"embedding": embed(query), "k": body.k if body else 4})
-    extraits = res["results"]
-    contexte = "\n\n".join(
+    excerpts = res["results"]
+    context = "\n\n".join(
         f"[source: {e['filename']} · kb: {e['kb']} · score {e['score']}]\n{e['content']}"
-        for e in extraits
-    ) or "(aucun document accessible pour cet utilisateur)"
-    prompt = f"Documents autorisés :\n{contexte}\n\nQuestion : {query}"
+        for e in excerpts
+    ) or "(no document accessible for this user)"
+    prompt = f"Authorized documents:\n{context}\n\nQuestion: {query}"
 
-    # l'agent répond en streaming, avec sa mémoire rechargée depuis la base
-    texte, history = asyncio.run(_run_agent(prompt, conv.history, stream))
+    # the agent replies in streaming, with its memory reloaded from the database
+    text, history = asyncio.run(_run_agent(prompt, conv.history, stream))
 
-    # persistance : les deux messages, les sources, et la mémoire de l'agent
+    # persistence: both messages, the sources, and the agent's memory
     ChatMessage.create(
         conversation_id=conv.id, user_id=auth["user_id"], role="user", content=query
     )
@@ -158,20 +158,20 @@ def ask_in_conversation(stream, id, auth, body: Question = None):
         conversation_id=conv.id,
         user_id=auth["user_id"],
         role="assistant",
-        content=texte,
+        content=text,
         sources=[
             {"filename": e["filename"], "kb": e["kb"], "score": e["score"]}
-            for e in extraits
+            for e in excerpts
         ],
     )
     conv.history = history
     conv.save()
     log.info(
-        "tour rag",
+        "rag turn",
         conversation_id=conv.id,
         user_id=auth["user_id"],
-        sources=len(extraits),
-        caracteres=len(texte),
+        sources=len(excerpts),
+        characters=len(text),
     )
 
 
@@ -182,9 +182,9 @@ async def _run_agent(prompt: str, raw_history: list, stream):
     history = (
         ModelMessagesTypeAdapter.validate_python(raw_history) if raw_history else None
     )
-    morceaux = []
+    chunks = []
     async with agent.run_stream(prompt, message_history=history) as result:
         async for delta in result.stream_text(delta=True):
-            morceaux.append(delta)
+            chunks.append(delta)
             stream.write(delta)
-    return "".join(morceaux), json.loads(result.all_messages_json())
+    return "".join(chunks), json.loads(result.all_messages_json())

@@ -1,15 +1,15 @@
-//! Observabilité — logs structurés JSON sur stderr, niveau via `VIGNEMALE_LOG`.
+//! Observability — structured JSON logs on stderr, level via `VIGNEMALE_LOG`.
 //!
-//! Chaque requête HTTP est loggée par le serveur (méthode, chemin, endpoint,
-//! statut, durée, request_id) ; les erreurs applicatives y rattachent leur
-//! traceback via le même request_id. Fondation pour l'export OTel (phase 5).
+//! Each HTTP request is logged by the server (method, path, endpoint,
+//! status, duration, request_id); application errors attach their
+//! traceback to it via the same request_id. Foundation for OTel export (phase 5).
 
 use std::sync::Once;
 
 static INIT: Once = Once::new();
 
-/// Initialise le subscriber tracing (idempotent). Niveau par défaut : `info`,
-/// surchargable avec `VIGNEMALE_LOG` (syntaxe EnvFilter, ex. `debug` ou
+/// Initializes the tracing subscriber (idempotent). Default level: `info`,
+/// overridable with `VIGNEMALE_LOG` (EnvFilter syntax, e.g. `debug` or
 /// `vignemale=trace`).
 pub fn init_tracing() {
     INIT.call_once(|| {
@@ -24,7 +24,7 @@ pub fn init_tracing() {
     });
 }
 
-/// Génère un identifiant de requête court (uuid v4 sans tirets).
+/// Generates a short request identifier (uuid v4 without dashes).
 pub fn request_id() -> String {
     uuid::Uuid::new_v4().simple().to_string()
 }

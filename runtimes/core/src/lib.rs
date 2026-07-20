@@ -1,11 +1,11 @@
-//! `vignemale-runtime-core` — le cœur runtime de Vignemale.
+//! `vignemale-runtime-core` — the Vignemale runtime core.
 //!
-//! Types proto générés depuis `vignemale/proto/` (prost) + modules de logique
-//! portés depuis Encore (`runtimes/core`, MPL — cf. `proto/ATTRIBUTION.md`), rebrandés.
+//! Proto types generated from `vignemale/proto/` (prost) + logic modules
+//! ported from Encore (`runtimes/core`, MPL — cf. `proto/ATTRIBUTION.md`), rebranded.
 //!
-//! Modules portés : config · proccfg · runtime_config · names · secrets · objects ·
-//! api (serveur HTTP focalisé) · sqldb (Postgres) · observability (logs JSON).
-//! À venir : queue.
+//! Ported modules: config · proccfg · runtime_config · names · secrets · objects ·
+//! api (focused HTTP server) · sqldb (Postgres) · observability (JSON logs).
+//! Coming next: queue.
 
 pub mod api;
 pub mod config;

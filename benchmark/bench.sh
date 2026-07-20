@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Benchmark Vignemale vs FastAPI — oha, 3 scénarios. Usage (venv actif) : ./bench.sh
+# Benchmark Vignemale vs FastAPI — oha, 3 scenarios. Usage (venv active): ./bench.sh
 set -euo pipefail
 cd "$(dirname "$0")"
 
 CONN=${CONN:-50}
 DUR=${DUR:-10s}
-WORKERS=${WORKERS:-4}   # workers uvicorn ; vignemale = 1 process (à noter)
+WORKERS=${WORKERS:-4}   # uvicorn workers; vignemale = 1 process (note)
 
-echo "== démarrage =="
+echo "== starting =="
 VIGNEMALE_WORKERS=$WORKERS VIGNEMALE_ADDR=127.0.0.1:8080 vignemale run app_vignemale.py --addr 127.0.0.1:8080 >/tmp/vgm.log 2>&1 &
 VGM=$!
 uvicorn app_fastapi:app --host 127.0.0.1 --port 8081 --workers "$WORKERS" --log-level warning >/tmp/fa.log 2>&1 &
@@ -16,7 +16,7 @@ trap 'kill $VGM $FA 2>/dev/null || true' EXIT
 for url in http://127.0.0.1:8080/hello http://127.0.0.1:8081/hello; do
   for _ in $(seq 1 60); do curl -sf "$url" >/dev/null 2>&1 && break; sleep 0.2; done
 done
-echo "  vignemale: $WORKERS worker(s) · fastapi/uvicorn: $WORKERS worker(s) · c=$CONN durée=$DUR"
+echo "  vignemale: $WORKERS worker(s) · fastapi/uvicorn: $WORKERS worker(s) · c=$CONN duration=$DUR"
 echo
 
 bench() { oha -c "$CONN" -z "$DUR" --no-tui --output-format json "$@" | python3 _parse.py; }
@@ -31,7 +31,7 @@ run() {
   echo
 }
 
-echo "== résultats =="
+echo "== results =="
 run "GET /hello (JSON)"        "/hello"
 run "GET /items/42 (param)"    "/items/42"
 run "POST /orders (Pydantic)"  "/orders" -m POST -d '{"item_id":7,"qty":3}' -T application/json

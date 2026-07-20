@@ -1,6 +1,6 @@
-"""SQLDatabase (Postgres via le core Rust).
+"""SQLDatabase (Postgres via the Rust core).
 
-La résolution de DSN se teste sans base ; le reste demande un Postgres :
+DSN resolution can be tested without a database; the rest needs a Postgres:
 
     docker run -d --name vignemale-pg -p 5433:5432 -e POSTGRES_PASSWORD=vignemale postgres:16
     VIGNEMALE_TEST_PG=postgres://postgres:vignemale@127.0.0.1:5433/postgres python -m pytest tests/ -k sqldb
@@ -14,22 +14,22 @@ from vignemale import SQLDatabase, SQLError
 
 PG = os.environ.get("VIGNEMALE_TEST_PG")
 needs_pg = pytest.mark.skipif(
-    not PG, reason="pose VIGNEMALE_TEST_PG (DSN Postgres) pour l'activer"
+    not PG, reason="set VIGNEMALE_TEST_PG (Postgres DSN) to enable"
 )
 
 
 def test_dsn_resolution_specific_wins(monkeypatch):
-    monkeypatch.setenv("VIGNEMALE_SQLDB_MABASE", "postgres://specifique")
-    monkeypatch.setenv("VIGNEMALE_SQLDB", "postgres://commun")
-    assert SQLDatabase("mabase").dsn == "postgres://specifique"
-    assert SQLDatabase("autre").dsn == "postgres://commun"
+    monkeypatch.setenv("VIGNEMALE_SQLDB_MYDB", "postgres://specific")
+    monkeypatch.setenv("VIGNEMALE_SQLDB", "postgres://common")
+    assert SQLDatabase("mydb").dsn == "postgres://specific"
+    assert SQLDatabase("other").dsn == "postgres://common"
 
 
 def test_dsn_missing_is_clear_error(monkeypatch):
-    monkeypatch.delenv("VIGNEMALE_SQLDB_SANSDSN", raising=False)
+    monkeypatch.delenv("VIGNEMALE_SQLDB_NODSN", raising=False)
     monkeypatch.delenv("VIGNEMALE_SQLDB", raising=False)
-    with pytest.raises(SQLError, match="VIGNEMALE_SQLDB_SANSDSN"):
-        SQLDatabase("sansdsn").dsn
+    with pytest.raises(SQLError, match="VIGNEMALE_SQLDB_NODSN"):
+        SQLDatabase("nodsn").dsn
 
 
 @pytest.fixture
@@ -64,13 +64,13 @@ def test_execute_returns_rowcount(db):
 def test_query_types_roundtrip(db):
     db.execute(
         "INSERT INTO vignemale_pytest (title, done, score, meta) VALUES ($1, $2, $3, $4)",
-        "typé",
+        "typed",
         True,
         9.5,
         {"tags": ["a", "b"]},
     )
     row = db.query_row("SELECT * FROM vignemale_pytest")
-    assert row["title"] == "typé"
+    assert row["title"] == "typed"
     assert row["done"] is True
     assert row["score"] == 9.5
     assert row["meta"] == {"tags": ["a", "b"]}
@@ -90,8 +90,8 @@ def test_query_row_none_when_empty(db):
 
 @needs_pg
 def test_sql_error_is_surfaced(db):
-    with pytest.raises(SQLError, match="(?i)table_inexistante"):
-        db.query("SELECT * FROM table_inexistante")
+    with pytest.raises(SQLError, match="(?i)nonexistent_table"):
+        db.query("SELECT * FROM nonexistent_table")
 
 
 @needs_pg
@@ -101,26 +101,26 @@ def test_bad_dsn_is_sql_error(monkeypatch):
         SQLDatabase("broken").query("SELECT 1")
 
 
-# --- transactions (portées d'Encore : COMMIT/ROLLBACK, atomicité) ---
+# --- transactions (Encore-ported: COMMIT/ROLLBACK, atomicity) ---
 
 
 @needs_pg
 def test_transaction_commit(db):
     with db.transaction() as tx:
-        tx.execute("INSERT INTO vignemale_pytest (title) VALUES ($1)", "dans la tx")
-        # visible DANS la transaction…
+        tx.execute("INSERT INTO vignemale_pytest (title) VALUES ($1)", "in the tx")
+        # visible INSIDE the transaction…
         assert tx.query_row("SELECT count(*) AS n FROM vignemale_pytest")["n"] == 1
-    # …et après le COMMIT
-    assert db.query_row("SELECT title FROM vignemale_pytest")["title"] == "dans la tx"
+    # …and after the COMMIT
+    assert db.query_row("SELECT title FROM vignemale_pytest")["title"] == "in the tx"
 
 
 @needs_pg
 def test_transaction_rollback_on_exception(db):
     with pytest.raises(ValueError):
         with db.transaction() as tx:
-            tx.execute("INSERT INTO vignemale_pytest (title) VALUES ($1)", "fantôme")
-            raise ValueError("boum métier")
-    # l'exception a tout annulé
+            tx.execute("INSERT INTO vignemale_pytest (title) VALUES ($1)", "ghost")
+            raise ValueError("business boom")
+    # the exception rolled everything back
     assert db.query_row("SELECT count(*) AS n FROM vignemale_pytest")["n"] == 0
 
 
@@ -128,22 +128,22 @@ def test_transaction_rollback_on_exception(db):
 def test_transaction_isolation(db):
     with db.transaction() as tx:
         tx.execute("INSERT INTO vignemale_pytest (title) VALUES ($1)", "invisible")
-        # pas encore visible HORS de la transaction
+        # not yet visible OUTSIDE the transaction
         assert db.query_row("SELECT count(*) AS n FROM vignemale_pytest")["n"] == 0
     assert db.query_row("SELECT count(*) AS n FROM vignemale_pytest")["n"] == 1
 
 
-# --- types riches (portés du val.rs d'Encore) ---
+# --- rich types (ported from Encore's val.rs) ---
 
 
 @needs_pg
 def test_numeric_precision_preserved(db):
-    db.execute("ALTER TABLE vignemale_pytest ADD COLUMN prix NUMERIC(12,2)")
+    db.execute("ALTER TABLE vignemale_pytest ADD COLUMN price NUMERIC(12,2)")
     db.execute(
-        "INSERT INTO vignemale_pytest (title, prix) VALUES ($1, $2)", "n", "12345678.91"
+        "INSERT INTO vignemale_pytest (title, price) VALUES ($1, $2)", "n", "12345678.91"
     )
-    # NUMERIC voyage en string : pas de perte float
-    assert db.query_row("SELECT prix FROM vignemale_pytest")["prix"] == "12345678.91"
+    # NUMERIC travels as a string: no float loss
+    assert db.query_row("SELECT price FROM vignemale_pytest")["price"] == "12345678.91"
 
 
 @needs_pg

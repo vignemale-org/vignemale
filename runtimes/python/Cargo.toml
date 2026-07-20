@@ -3,8 +3,8 @@ name = "vignemale-python-runtime"
 version = "0.1.0"
 edition = "2021"
 
-# Binding PyO3 (miroir de runtimes/js d'Encore, en NAPI). Produit l'extension
-# Python `vignemale._core`.
+# PyO3 binding (mirror of Encore's runtimes/js, in NAPI). Produces the Python
+# extension `vignemale._core`.
 [lib]
 name = "_core"
 crate-type = ["cdylib"]

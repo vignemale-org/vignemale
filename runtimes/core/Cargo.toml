@@ -4,62 +4,62 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-# Types proto (binaire), comme Encore. Versions alignées sur Encore.
+# Proto types (binary), like Encore. Versions aligned with Encore.
 prost = "0.12"
 prost-types = "0.12"
 anyhow = "1.0"
 base64 = "0.21"
 flate2 = "1.0"
 gjson = "0.8.1"
-# Provider Object Storage (S3-compatible → Scaleway / MinIO / AWS).
-# default-features=false pour couper `default-https-client`, qui force le backend
-# crypto aws-lc-rs (C, ne cross-compile pas en aarch64). On injecte nous-mêmes un
-# client HTTP rustls-ring (cf. objects.rs) — tout le TLS reste en pur Rust/ring.
+# Object Storage provider (S3-compatible -> Scaleway / MinIO / AWS).
+# default-features=false to cut out `default-https-client`, which forces the
+# aws-lc-rs crypto backend (C, does not cross-compile to aarch64). We inject a
+# rustls-ring HTTP client ourselves (cf. objects.rs) — all TLS stays pure Rust/ring.
 aws-config = { version = "1.1.10", default-features = false, features = ["rt-tokio"] }
 aws-sdk-s3 = { version = "1.58", default-features = false, features = ["sigv4a", "http-1x", "rt-tokio"] }
 aws-credential-types = "1.2"
 aws-smithy-http-client = { version = "1", default-features = false, features = ["rustls-ring"] }
 tokio = { version = "1", features = ["sync", "net", "rt", "macros", "time"] }
-# Serveur HTTP — même stack qu'Encore (axum 0.7 + hyper 1, en transitif).
+# HTTP server — same stack as Encore (axum 0.7 + hyper 1, transitively).
 axum = "0.7"
 tower-http = { version = "0.5", features = ["cors", "fs"] }
 form_urlencoded = "1"
-# feature "all" : expose set_reuse_port (SO_REUSEPORT, mode multi-process). Sans
-# elle, la méthode n'est compilée que si une autre crate active la feature — trop
-# fragile. (Côté Windows, set_reuse_port reste absent → gardé #[cfg(unix)].)
+# "all" feature: exposes set_reuse_port (SO_REUSEPORT, multi-process mode). Without
+# it, the method is only compiled if another crate enables the feature — too
+# fragile. (On Windows, set_reuse_port remains absent -> kept #[cfg(unix)].)
 socket2 = { version = "0.5", features = ["all"] }
 tokio-stream = "0.1"
-# gateway — forward HTTP vers les services backend (reqwest rustls, pas d'openssl)
+# gateway — forwards HTTP to the backend services (reqwest rustls, no openssl)
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["raw_value"] }
-# sqldb — Postgres (pool + requêtes + transactions + TLS), comme Encore.
+# sqldb — Postgres (pool + queries + transactions + TLS), like Encore.
 tokio-postgres = { version = "0.7", features = ["with-chrono-0_4", "with-serde_json-1", "with-uuid-1"] }
 deadpool-postgres = "0.14"
-# TLS Postgres en rustls (pur Rust, provider ring) — PAS d'OpenSSL système, donc
-# wheels portables Linux/macOS/Windows. Roots Mozilla via webpki-roots.
+# Postgres TLS in rustls (pure Rust, ring provider) — NO system OpenSSL, hence
+# portable Linux/macOS/Windows wheels. Mozilla roots via webpki-roots.
 tokio-postgres-rustls = "0.12"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-pemfile = "2"
 webpki-roots = "0.26"
 rust_decimal = { version = "1", features = ["db-tokio-postgres"] }
-# Génération SQL de l'ORM (le builder sous SeaORM) — dynamique à l'exécution,
-# c'est ce qui permet de piloter l'ORM depuis les SDKs (Python, JS demain).
+# SQL generation for the ORM (the builder underneath SeaORM) — dynamic at runtime,
+# which is what makes it possible to drive the ORM from the SDKs (Python, JS tomorrow).
 sea-query = { version = "0.32", features = ["with-json"] }
 bytes = "1"
 chrono = "0.4"
 uuid = { version = "1", features = ["v4"] }
-# Observabilité — logs structurés JSON + spans (fondation OTel à venir).
+# Observability — structured JSON logs + spans (OTel foundation to come).
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
-# svcauth — signature HMAC des appels service-à-service (façon EncoreAuth).
+# svcauth — HMAC signing of service-to-service calls (EncoreAuth-style).
 hmac = "0.12"
 sha2 = "0.10"
 hex = "0.4"
 
 [build-dependencies]
 prost-build = "0.12"
-# protoc vendoré (binaire prébuilt pour l'arch HÔTE) — build.rs pose PROTOC
-# lui-même. Plus aucune install protoc en CI : marche sur Linux/macOS/Windows
-# et en cross-compilation (build.rs tourne sur l'hôte, ex. x86_64 pour aarch64).
+# Vendored protoc (prebuilt binary for the HOST arch) — build.rs sets PROTOC
+# itself. No more protoc install in CI: works on Linux/macOS/Windows
+# and in cross-compilation (build.rs runs on the host, e.g. x86_64 for aarch64).
 protoc-bin-vendored = "3"

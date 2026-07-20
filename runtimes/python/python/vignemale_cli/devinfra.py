@@ -1,13 +1,13 @@
-"""Provisioning local (dev) : `vignemale run` fait apparaître l'infra déclarée.
+"""Local provisioning (dev): `vignemale run` brings up the declared infra.
 
-Le code déclare `SQLDatabase("todo")` ; au `run`, Vignemale démarre (ou
-réutilise) un Postgres Docker partagé, crée la base si besoin et pose le DSN
-dans l'environnement — rien à installer, rien à exporter, façon Encore.
+The code declares `SQLDatabase("todo")`; at `run`, Vignemale starts (or
+reuses) a shared Docker Postgres, creates the database if needed and sets the DSN
+in the environment — nothing to install, nothing to export, Encore-style.
 
-Un seul conteneur (`vignemale-postgres`, port 5498, volume persistant) sert
-toutes les apps ; chaque `SQLDatabase("x")` devient une database `x` dedans.
-Un DSN déjà présent dans l'environnement (VIGNEMALE_SQLDB_<NOM> ou
-VIGNEMALE_SQLDB) a priorité : c'est le provider switch — même code, autre
+A single container (`vignemale-postgres`, port 5498, persistent volume) serves
+all the apps; each `SQLDatabase("x")` becomes a database `x` inside it.
+A DSN already present in the environment (VIGNEMALE_SQLDB_<NAME> or
+VIGNEMALE_SQLDB) takes priority: that's the provider switch — same code, other
 backend.
 """
 
@@ -23,15 +23,15 @@ from vignemale import _core
 CONTAINER = "vignemale-postgres"
 VOLUME = "vignemale-pg-data"
 PORT = 5498
-# pgvector inclus (RAG/embeddings) — même Postgres 16, extension en plus,
-# comme les Managed Database Scaleway.
+# pgvector included (RAG/embeddings) — same Postgres 16, extra extension,
+# like Scaleway Managed Databases.
 IMAGE = "pgvector/pgvector:pg16"
-_PASSWORD = "vignemale"  # dev local uniquement
+_PASSWORD = "vignemale"  # local dev only
 ADMIN_DSN = f"postgres://postgres:{_PASSWORD}@127.0.0.1:{PORT}/postgres"
 
 
 def provision_local(db_names: list) -> None:
-    """Pose un DSN dans l'env pour chaque base déclarée qui n'en a pas déjà un."""
+    """Sets a DSN in the env for each declared database that does not already have one."""
     missing = []
     for name in db_names:
         env_key = _env_key(name)
@@ -47,7 +47,7 @@ def provision_local(db_names: list) -> None:
         os.environ[env_key] = (
             f"postgres://postgres:{_PASSWORD}@127.0.0.1:{PORT}/{dbname}"
         )
-        print(f"vignemale: base Postgres « {name} » prête (docker local)", flush=True)
+        print(f'vignemale: Postgres database "{name}" ready (local docker)', flush=True)
 
 
 def _env_key(name: str) -> str:
@@ -65,15 +65,15 @@ def _docker(*args):
 def _ensure_postgres() -> None:
     if not shutil.which("docker"):
         raise SystemExit(
-            "vignemale: l'app déclare une base SQL ; il faut Docker pour le "
-            "Postgres local (https://docker.com) — ou pose VIGNEMALE_SQLDB toi-même"
+            "vignemale: the app declares a SQL database; Docker is needed for the "
+            "local Postgres (https://docker.com) — or set VIGNEMALE_SQLDB yourself"
         )
     if _docker("info").returncode != 0:
         _start_docker_daemon()
 
     state = _docker("inspect", "-f", "{{.State.Running}}", CONTAINER)
     if state.returncode != 0:
-        print("vignemale: démarrage du Postgres local (docker)…", flush=True)
+        print("vignemale: starting the local Postgres (docker)…", flush=True)
         r = _docker(
             "run", "-d",
             "--name", CONTAINER,
@@ -84,7 +84,7 @@ def _ensure_postgres() -> None:
         )
         if r.returncode != 0:
             raise SystemExit(
-                f"vignemale: impossible de lancer le Postgres local: {r.stderr.strip()}"
+                f"vignemale: unable to start the local Postgres: {r.stderr.strip()}"
             )
     elif state.stdout.strip() != "true":
         _docker("start", CONTAINER)
@@ -94,14 +94,14 @@ def _ensure_postgres() -> None:
 
 def _start_docker_daemon() -> None:
     if platform.system() == "Darwin":
-        print("vignemale: démarrage de Docker…", flush=True)
+        print("vignemale: starting Docker…", flush=True)
         subprocess.run(["open", "-a", "Docker"], capture_output=True)
         deadline = time.time() + 60
         while time.time() < deadline:
             if _docker("info").returncode == 0:
                 return
             time.sleep(2)
-    raise SystemExit("vignemale: le démon Docker ne répond pas — lance Docker puis réessaie")
+    raise SystemExit("vignemale: the Docker daemon is not responding — start Docker then retry")
 
 
 def _wait_ready(timeout: float = 120) -> None:
@@ -112,7 +112,7 @@ def _wait_ready(timeout: float = 120) -> None:
             return
         except RuntimeError:
             time.sleep(0.4)
-    raise SystemExit("vignemale: le Postgres local n'a pas démarré à temps")
+    raise SystemExit("vignemale: the local Postgres did not start in time")
 
 
 def _ensure_database(dbname: str) -> None:
@@ -125,19 +125,19 @@ def _ensure_database(dbname: str) -> None:
         _core.sqldb_execute(ADMIN_DSN, f'CREATE DATABASE "{dbname}"', "[]")
 
 
-# --- Object Storage local : MinIO (S3-compatible), façon Postgres ci-dessus ---
+# --- Local Object Storage: MinIO (S3-compatible), like Postgres above ---
 
 MINIO_CONTAINER = "vignemale-minio"
 MINIO_VOLUME = "vignemale-minio-data"
 MINIO_PORT = 9100
-MINIO_KEY = "minioadmin"  # dev local uniquement
+MINIO_KEY = "minioadmin"  # local dev only
 MINIO_ENDPOINT = f"http://127.0.0.1:{MINIO_PORT}"
 
 
 def provision_buckets(bucket_names: list) -> None:
-    """Démarre MinIO en local (si besoin), crée les buckets, pose la config S3.
+    """Starts MinIO locally (if needed), creates the buckets, sets the S3 config.
 
-    Sautée si `VIGNEMALE_S3_ENDPOINT` est déjà posé (prod / provider switch)."""
+    Skipped if `VIGNEMALE_S3_ENDPOINT` is already set (prod / provider switch)."""
     if not bucket_names or os.environ.get("VIGNEMALE_S3_ENDPOINT"):
         return
     _ensure_minio()
@@ -150,20 +150,20 @@ def provision_buckets(bucket_names: list) -> None:
         _core.bucket_op(
             (MINIO_ENDPOINT, "us-east-1", MINIO_KEY, MINIO_KEY, cloud), "create"
         )
-        print(f"vignemale: bucket S3 « {name} » prêt (minio local)", flush=True)
+        print(f'vignemale: S3 bucket "{name}" ready (local minio)', flush=True)
 
 
 def _ensure_minio() -> None:
     if not shutil.which("docker"):
         raise SystemExit(
-            "vignemale: l'app déclare un Bucket ; il faut Docker pour MinIO en "
-            "local — ou pose VIGNEMALE_S3_ENDPOINT toi-même"
+            "vignemale: the app declares a Bucket; Docker is needed for MinIO "
+            "locally — or set VIGNEMALE_S3_ENDPOINT yourself"
         )
     if _docker("info").returncode != 0:
         _start_docker_daemon()
     state = _docker("inspect", "-f", "{{.State.Running}}", MINIO_CONTAINER)
     if state.returncode != 0:
-        print("vignemale: démarrage de MinIO local (docker)…", flush=True)
+        print("vignemale: starting local MinIO (docker)…", flush=True)
         r = _docker(
             "run", "-d",
             "--name", MINIO_CONTAINER,
@@ -174,7 +174,7 @@ def _ensure_minio() -> None:
             "minio/minio", "server", "/data",
         )
         if r.returncode != 0:
-            raise SystemExit(f"vignemale: impossible de lancer MinIO: {r.stderr.strip()}")
+            raise SystemExit(f"vignemale: unable to start MinIO: {r.stderr.strip()}")
     elif state.stdout.strip() != "true":
         _docker("start", MINIO_CONTAINER)
     _wait_minio()
@@ -191,4 +191,4 @@ def _wait_minio(timeout: float = 60) -> None:
             return
         except RuntimeError:
             time.sleep(0.4)
-    raise SystemExit("vignemale: MinIO n'a pas démarré à temps")
+    raise SystemExit("vignemale: MinIO did not start in time")

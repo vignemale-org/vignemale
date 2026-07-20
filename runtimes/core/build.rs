@@ -1,18 +1,19 @@
-// Génère les types Rust depuis les .proto (prost), comme `runtimes/core/build.rs`
-// d'Encore. Les imports (schema, infra, secretdata) sont compilés transitivement.
+// Generates the Rust types from the .proto files (prost), like Encore's
+// `runtimes/core/build.rs`. The imports (schema, infra, secretdata) are compiled
+// transitively.
 
 fn main() -> std::io::Result<()> {
-    // protoc hermétique : on utilise le binaire vendoré pour l'arch hôte (sauf si
-    // PROTOC est déjà défini dans l'environnement, qui prime). Les types
-    // bien-connus (google/protobuf/*) viennent de l'include vendoré.
+    // Hermetic protoc: we use the vendored binary for the host arch (unless
+    // PROTOC is already set in the environment, which takes precedence). The
+    // well-known types (google/protobuf/*) come from the vendored include.
     let vendored_include = protoc_bin_vendored::include_path()
-        .expect("include protoc vendoré")
+        .expect("vendored protoc include")
         .to_string_lossy()
         .into_owned();
     if std::env::var_os("PROTOC").is_none() {
         std::env::set_var(
             "PROTOC",
-            protoc_bin_vendored::protoc_bin_path().expect("protoc vendoré"),
+            protoc_bin_vendored::protoc_bin_path().expect("vendored protoc"),
         );
     }
     prost_build::compile_protos(

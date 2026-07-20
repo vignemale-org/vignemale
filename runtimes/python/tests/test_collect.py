@@ -1,4 +1,4 @@
-"""Extraction statique (collect) : golden test du meta.proto + détails d'extraction."""
+"""Static extraction (collect): golden test of meta.proto + extraction details."""
 
 import json
 import os
@@ -17,8 +17,8 @@ def meta_json(path: str) -> dict:
 
 
 def test_shop_meta_golden():
-    """Le protojson de examples/shop ne doit pas changer sans mise à jour volontaire
-    du golden (tests/golden/shop_meta.json) — c'est le contrat de `vignemale check`."""
+    """The protojson of examples/shop must not change without a deliberate update
+    of the golden (tests/golden/shop_meta.json) — it is the contract of `vignemale check`."""
     got = meta_json(os.path.join(EXAMPLES, "shop"))
     with open(os.path.join(GOLDEN, "shop_meta.json")) as f:
         expected = json.load(f)
@@ -60,8 +60,8 @@ def test_stream_flag_extracted():
 
 
 def test_sql_database_extracted():
-    """`SQLDatabase("todo")` est détectée statiquement (c'est elle qui pilote
-    le provisioning local de `vignemale run`)."""
+    """`SQLDatabase("todo")` is detected statically (it drives the local
+    provisioning of `vignemale run`)."""
     extracted, _ = extract_path(os.path.join(EXAMPLES, "todo.py"))
     assert extracted["databases"] == ["todo"]
     (svc,) = extracted["services"]
@@ -76,7 +76,7 @@ def test_sql_database_in_meta():
 
 
 def test_auth_extracted():
-    """`@auth_handler` et `auth=True` sont détectés statiquement → meta."""
+    """`@auth_handler` and `auth=True` are detected statically → meta."""
     extracted, _ = extract_path(os.path.join(EXAMPLES, "secure.py"))
     assert extracted["auth_handler"]["name"] == "check_token"
     (svc,) = extracted["services"]

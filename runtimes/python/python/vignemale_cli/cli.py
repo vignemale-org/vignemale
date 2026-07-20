@@ -1,12 +1,12 @@
-"""CLI Vignemale.
+"""Vignemale CLI.
 
-    vignemale run app.py            # un fichier
-    vignemale run ./monapp          # un dossier (multi-service)
-    vignemale check app.py|dossier  # extrait le graphe meta (statique, sans exécuter)
+    vignemale run app.py            # a single file
+    vignemale run ./myapp           # a directory (multi-service)
+    vignemale check app.py|dir      # extracts the meta graph (static, without running)
 
-Dans un dossier d'app, un service est soit un **fichier** `monservice.py`,
-soit un **dossier** `monservice/` (package : `__init__.py` déclare le
-`Service`, les endpoints vivent dans ses modules) — façon Encore.
+In an app directory, a service is either a **file** `myservice.py`,
+or a **directory** `myservice/` (package: `__init__.py` declares the
+`Service`, the endpoints live in its modules) — Encore-style.
 """
 
 import argparse
@@ -20,11 +20,11 @@ def _load_file(path: str) -> None:
     name = "__vig_" + os.path.splitext(os.path.basename(path))[0] + "__"
     spec = importlib.util.spec_from_file_location(name, path)
     mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)  # exécute les @api / Service → enregistre
+    spec.loader.exec_module(mod)  # runs the @api / Service → registers them
 
 
 def _load_package(pkg: str, dirpath: str) -> None:
-    importlib.import_module(pkg)  # exécute __init__.py (Service(...))
+    importlib.import_module(pkg)  # runs __init__.py (Service(...))
     for f in sorted(os.listdir(dirpath)):
         if f.endswith(".py") and not f.startswith("_"):
             importlib.import_module(f"{pkg}.{f[:-3]}")
@@ -44,7 +44,7 @@ def _load_app(path: str) -> None:
                 _load_file(full)
             elif (
                 not f.startswith(("_", "."))
-                and f != "vignemale_clients"  # clients générés ≠ service
+                and f != "vignemale_clients"  # generated clients ≠ service
                 and _is_service_dir(full)
             ):
                 _load_package(f, full)
@@ -52,11 +52,11 @@ def _load_app(path: str) -> None:
         sys.path.insert(0, os.path.dirname(path))
         _load_file(path)
     else:
-        raise SystemExit(f"introuvable: {path}")
+        raise SystemExit(f"not found: {path}")
 
 
 def _provision(path: str) -> None:
-    """Provisionne l'infra locale déclarée par l'app (statiquement, sans l'exécuter)."""
+    """Provisions the local infra declared by the app (statically, without running it)."""
     from .collect import extract_path
 
     extracted, _ = extract_path(path)
@@ -72,20 +72,20 @@ def _provision(path: str) -> None:
 
 
 def _migrate(path: str) -> None:
-    """Applique les migrations des bases déclarées avec un dossier `migrations`.
-    L'app doit être chargée (les SQLDatabase sont alors enregistrées)."""
+    """Applies the migrations of databases declared with a `migrations` directory.
+    The app must be loaded (the SQLDatabase objects are then registered)."""
     from vignemale.sqldb import _databases
 
     for db in _databases:
         if db._migrations:
             n = db.migrate()
             if n:
-                print(f"vignemale: {n} migration(s) appliquée(s) sur « {db.name} »",
+                print(f'vignemale: {n} migration(s) applied on "{db.name}"',
                       flush=True)
 
 
 def _run_one(path: str, addr: str, reuse_port: bool) -> None:
-    """Charge l'app et sert (un worker, ou le mode mono-process)."""
+    """Loads the app and serves it (one worker, or single-process mode)."""
     _load_app(path)
     from vignemale.api import serve
 
@@ -93,19 +93,19 @@ def _run_one(path: str, addr: str, reuse_port: bool) -> None:
 
 
 def _run_workers(path: str, addr: str, workers: int) -> None:
-    """Multi-process : fork N workers qui partagent le port (SO_REUSEPORT).
+    """Multi-process: fork N workers that share the port (SO_REUSEPORT).
 
-    Le parent superviseur ne touche JAMAIS le core Rust (sinon le runtime
-    tokio démarré avant le fork corromprait les workers). La provision (qui
-    parle au core) tourne donc dans un fork jetable ; puis chaque worker, après
-    son propre fork, recharge l'app et ouvre ses propres connexions — aucune
-    socket héritée/partagée entre process.
+    The supervisor parent NEVER touches the Rust core (otherwise the tokio
+    runtime started before the fork would corrupt the workers). Provisioning
+    (which talks to the core) therefore runs in a throwaway fork; then each
+    worker, after its own fork, reloads the app and opens its own connections —
+    no socket inherited/shared between processes.
     """
     import signal
     import time
 
-    # provision + migrations dans un process jetable → le parent reste vierge
-    # de tout tokio, et les migrations ne tournent qu'une fois (pas par worker).
+    # provision + migrations in a throwaway process → the parent stays free
+    # of any tokio, and the migrations run only once (not per worker).
     pid = os.fork()
     if pid == 0:
         _provision(path)
@@ -118,12 +118,12 @@ def _run_workers(path: str, addr: str, workers: int) -> None:
     for _ in range(workers):
         pid = os.fork()
         if pid == 0:  # worker
-            _provision(path)  # idempotent : pose le DSN local dans CE worker
+            _provision(path)  # idempotent: sets the local DSN in THIS worker
             _run_one(path, addr, reuse_port=True)
             os._exit(0)
         children.append(pid)
 
-    print(f"vignemale: {workers} workers sur http://{addr}", flush=True)
+    print(f"vignemale: {workers} workers on http://{addr}", flush=True)
     stopping = {"v": False}
 
     def _stop(*_a):
@@ -132,14 +132,14 @@ def _run_workers(path: str, addr: str, workers: int) -> None:
         stopping["v"] = True
         for pid in children:
             try:
-                os.kill(pid, signal.SIGINT)  # déclenche le drain gracieux
+                os.kill(pid, signal.SIGINT)  # triggers the graceful drain
             except ProcessLookupError:
                 pass
 
     signal.signal(signal.SIGINT, _stop)
     signal.signal(signal.SIGTERM, _stop)
 
-    # attend tous les workers ; si l'un meurt sans qu'on arrête, on stoppe tout
+    # wait for all workers; if one dies without us stopping, stop everything
     alive = set(children)
     while alive:
         try:
@@ -150,17 +150,17 @@ def _run_workers(path: str, addr: str, workers: int) -> None:
             continue
         alive.discard(pid)
         if not stopping["v"] and alive:
-            time.sleep(0.1)  # laisser le signal se propager si crash
+            time.sleep(0.1)  # let the signal propagate on crash
             _stop()
-    print("vignemale: workers arrêtés", flush=True)
+    print("vignemale: workers stopped", flush=True)
 
 
 def cmd_run(args):
-    # Infrastructure-from-Code : provisionne le local AVANT d'importer le code.
+    # Infrastructure-from-Code: provision the local infra BEFORE importing the code.
     workers = int(os.environ.get("VIGNEMALE_WORKERS", "1"))
     if workers > 1:
-        # la provision se fait dans _run_workers (fork jetable) pour garder le
-        # parent superviseur vierge de tout runtime Rust avant les forks.
+        # provisioning happens in _run_workers (throwaway fork) to keep the
+        # supervisor parent free of any Rust runtime before the forks.
         _run_workers(args.path, args.addr, workers)
     else:
         _provision(args.path)
@@ -175,7 +175,7 @@ def cmd_gateway(args):
     from .gateway import build_routes
 
     routes = build_routes(args.path)
-    _load_app(args.path)  # charge l'app → l'auth handler est dispo à l'edge
+    _load_app(args.path)  # load the app → the auth handler is available at the edge
     from vignemale.api import serve_gateway
 
     serve_gateway(routes, args.addr)
@@ -185,7 +185,7 @@ def cmd_gen(args):
     from .gen import generate
 
     for f in generate(args.path):
-        print(f"vignemale: écrit {f}")
+        print(f"vignemale: wrote {f}")
 
 
 def cmd_build(args):
@@ -202,25 +202,25 @@ def cmd_build(args):
     )
 
 
-def cmd_rgpd(args):
+def cmd_gdpr(args):
     import json as _json
 
-    from vignemale import rgpd
+    from vignemale import gdpr
 
     if args.action == "map":
-        _load_app(args.path)  # la carte est pure métadonnée : pas besoin de DB
-        print(_json.dumps(rgpd.data_map(), indent=2, ensure_ascii=False))
+        _load_app(args.path)  # the map is pure metadata: no DB needed
+        print(_json.dumps(gdpr.data_map(), indent=2, ensure_ascii=False))
         return
 
     if args.subject is None:
-        raise SystemExit("vignemale rgpd: --subject est requis pour export/forget")
+        raise SystemExit("vignemale gdpr: --subject is required for export/forget")
     _provision(args.path)
     _load_app(args.path)
     subject = int(args.subject) if args.subject.isdigit() else args.subject
     if args.action == "export":
-        print(_json.dumps(rgpd.export_subject(subject), indent=2, ensure_ascii=False))
+        print(_json.dumps(gdpr.export_subject(subject), indent=2, ensure_ascii=False))
     elif args.action == "forget":
-        report = rgpd.forget_subject(subject, dry_run=args.dry_run)
+        report = gdpr.forget_subject(subject, dry_run=args.dry_run)
         print(_json.dumps(report, indent=2, ensure_ascii=False))
 
 
@@ -272,14 +272,14 @@ def cmd_check(args):
 
 
 def _check_sql(path: str):
-    """Valide les requêtes sql() par PREPARE (mécanisme sqlx, au moment check)."""
+    """Validates the sql() queries via PREPARE (sqlx mechanism, at check time)."""
     _provision(path)
     _load_app(path)
     from vignemale.datamodel import check_sql_queries
 
     report = check_sql_queries()
     if not report:
-        print("vignemale: aucune requête sql() déclarée")
+        print("vignemale: no sql() query declared")
         return
     failed = 0
     for r in report:
@@ -294,112 +294,112 @@ def _check_sql(path: str):
             print(f"  ✗ {r['query']}  {r['error']}")
     total = len(report)
     if failed:
-        raise SystemExit(f"vignemale: {failed}/{total} requête(s) sql() invalide(s)")
-    print(f"vignemale: {total} requête(s) sql() validée(s) par PREPARE")
+        raise SystemExit(f"vignemale: {failed}/{total} sql() query(ies) invalid")
+    print(f"vignemale: {total} sql() query(ies) validated by PREPARE")
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="vignemale",
-        description="Déploie tes agents IA en production, depuis Python.",
+        description="Deploy your AI agents to production, from Python.",
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p_init = sub.add_parser(
-        "init", help="scaffold un projet de base (app.py + pyproject + .gitignore)"
+        "init", help="scaffold a starter project (app.py + pyproject + .gitignore)"
     )
-    p_init.add_argument("name", nargs="?", default=".", help="nom du projet (défaut: dossier courant)")
-    p_init.add_argument("path", nargs="?", default=".", help="où créer le projet (défaut: .)")
+    p_init.add_argument("name", nargs="?", default=".", help="project name (default: current directory)")
+    p_init.add_argument("path", nargs="?", default=".", help="where to create the project (default: .)")
     p_init.set_defaults(func=cmd_init)
 
-    p_run = sub.add_parser("run", help="lance l'app en local (découvre les @api et sert)")
-    p_run.add_argument("path", help="fichier ou dossier de l'app")
-    p_run.add_argument("--addr", default="127.0.0.1:8080", help="adresse d'écoute")
+    p_run = sub.add_parser("run", help="run the app locally (discovers the @api and serves)")
+    p_run.add_argument("path", help="app file or directory")
+    p_run.add_argument("--addr", default="127.0.0.1:8080", help="listen address")
     p_run.set_defaults(func=cmd_run)
 
     p_check = sub.add_parser(
-        "check", help="extrait le graphe meta statiquement (sans exécuter l'app)"
+        "check", help="extract the meta graph statically (without running the app)"
     )
-    p_check.add_argument("path", help="fichier ou dossier de l'app")
-    p_check.add_argument("--raw", action="store_true", help="dict intermédiaire au lieu du meta.proto")
+    p_check.add_argument("path", help="app file or directory")
+    p_check.add_argument("--raw", action="store_true", help="intermediate dict instead of the meta.proto")
     p_check.add_argument(
         "--sql",
         action="store_true",
-        help="valide les requêtes sql() par PREPARE Postgres (sans les exécuter)",
+        help="validate the sql() queries via Postgres PREPARE (without running them)",
     )
     p_check.set_defaults(func=cmd_check)
 
     p_gw = sub.add_parser(
-        "gateway", help="entrée unique multi-services : route + auth à l'edge"
+        "gateway", help="single entry point for multi-services: routing + auth at the edge"
     )
-    p_gw.add_argument("path", help="dossier de l'app multi-services")
-    p_gw.add_argument("--addr", default="127.0.0.1:8080", help="adresse d'écoute")
+    p_gw.add_argument("path", help="multi-service app directory")
+    p_gw.add_argument("--addr", default="127.0.0.1:8080", help="listen address")
     p_gw.set_defaults(func=cmd_gateway)
 
     p_gen = sub.add_parser(
-        "gen", help="génère les clients de services typés (vignemale_clients/)"
+        "gen", help="generate the typed service clients (vignemale_clients/)"
     )
-    p_gen.add_argument("path", help="fichier ou dossier de l'app")
+    p_gen.add_argument("path", help="app file or directory")
     p_gen.set_defaults(func=cmd_gen)
 
     p_build = sub.add_parser(
-        "build", help="construit l'image Docker de l'app (Dockerfile généré)"
+        "build", help="build the app's Docker image (generated Dockerfile)"
     )
-    p_build.add_argument("path", help="fichier ou dossier de l'app")
-    p_build.add_argument("--tag", help="tag de l'image (défaut: vignemale-<app>:latest)")
+    p_build.add_argument("path", help="app file or directory")
+    p_build.add_argument("--tag", help="image tag (default: vignemale-<app>:latest)")
     p_build.add_argument(
         "--base",
-        help="image de base runtime (défaut: ghcr.io/vignemale-org/vignemale-python:latest "
-        "ou $VIGNEMALE_BASE_IMAGE)",
+        help="runtime base image (default: ghcr.io/vignemale-org/vignemale-python:latest "
+        "or $VIGNEMALE_BASE_IMAGE)",
     )
     p_build.add_argument(
         "--from-source",
         dest="from_source",
         action="store_true",
-        help="compile le runtime Rust dans l'image au lieu de partir de l'image de base",
+        help="compile the Rust runtime inside the image instead of starting from the base image",
     )
     p_build.add_argument(
         "--platform",
-        help="plateforme cible (ex. linux/amd64 pour Scaleway depuis un Mac arm64)",
+        help="target platform (e.g. linux/amd64 for Scaleway from an arm64 Mac)",
     )
     p_build.add_argument(
-        "--push", action="store_true", help="pousse l'image au registry (buildx) après build"
+        "--push", action="store_true", help="push the image to the registry (buildx) after build"
     )
     p_build.add_argument(
-        "--print", action="store_true", help="affiche le Dockerfile sans builder"
+        "--print", action="store_true", help="print the Dockerfile without building"
     )
     p_build.set_defaults(func=cmd_build)
 
-    p_rgpd = sub.add_parser(
-        "rgpd", help="données personnelles : map (carte) · export · forget"
+    p_gdpr = sub.add_parser(
+        "gdpr", help="personal data: map · export · forget"
     )
-    p_rgpd.add_argument("action", choices=["map", "export", "forget"])
-    p_rgpd.add_argument("path", help="fichier ou dossier de l'app")
-    p_rgpd.add_argument("--subject", help="identifiant de la personne (export/forget)")
-    p_rgpd.add_argument(
-        "--dry-run", action="store_true", help="forget : montre sans effacer"
+    p_gdpr.add_argument("action", choices=["map", "export", "forget"])
+    p_gdpr.add_argument("path", help="app file or directory")
+    p_gdpr.add_argument("--subject", help="the person's identifier (export/forget)")
+    p_gdpr.add_argument(
+        "--dry-run", action="store_true", help="forget: show without erasing"
     )
-    p_rgpd.set_defaults(func=cmd_rgpd)
+    p_gdpr.set_defaults(func=cmd_gdpr)
 
     p_login = sub.add_parser(
-        "login", help="s'authentifier auprès de Vignemale Cloud (device-flow navigateur)"
+        "login", help="authenticate against Vignemale Cloud (browser device-flow)"
     )
     p_login.set_defaults(func=cmd_login)
 
-    p_logout = sub.add_parser("logout", help="supprimer les identifiants stockés")
+    p_logout = sub.add_parser("logout", help="remove the stored credentials")
     p_logout.set_defaults(func=cmd_logout)
 
     p_deploy = sub.add_parser(
-        "deploy", help="push-to-deploy : pousse l'app vers le control plane (auth par token)"
+        "deploy", help="push-to-deploy: push the app to the control plane (token auth)"
     )
-    p_deploy.add_argument("path", nargs="?", default=".", help="dossier de l'app (défaut: .)")
+    p_deploy.add_argument("path", nargs="?", default=".", help="app directory (default: .)")
     p_deploy.set_defaults(func=cmd_deploy)
 
     p_link = sub.add_parser(
-        "link", help="rattache ce dépôt à un projet créé dans le panel (écrit pyproject)"
+        "link", help="link this repo to a project created in the panel (writes pyproject)"
     )
-    p_link.add_argument("name", help="nom du projet (tel que créé dans le panel)")
-    p_link.add_argument("path", nargs="?", default=".", help="dossier de l'app (défaut: .)")
+    p_link.add_argument("name", help="project name (as created in the panel)")
+    p_link.add_argument("path", nargs="?", default=".", help="app directory (default: .)")
     p_link.set_defaults(func=cmd_link)
 
     args = parser.parse_args(argv)

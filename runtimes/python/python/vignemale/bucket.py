@@ -1,34 +1,34 @@
-"""Primitive `Bucket` : Object Storage S3-compatible, servie par le core Rust.
+"""`Bucket` primitive: S3-compatible Object Storage, served by the Rust core.
 
     from vignemale import Bucket
 
     docs = Bucket("documents")
-    docs.put("rapport.pdf", pdf_bytes)
-    data = docs.get("rapport.pdf")
+    docs.put("report.pdf", pdf_bytes)
+    data = docs.get("report.pdf")
     for key in docs.list(prefix="2026/"):
         ...
 
-Provider switch (façon Encore) : le code déclare le bucket, l'ENVIRONNEMENT
-fournit le backend S3. En local : MinIO (auto-provisionné par `vignemale run`).
-En prod : Scaleway Object Storage (ou tout S3-compatible).
+Provider switch (Encore style): the code declares the bucket, the ENVIRONMENT
+provides the S3 backend. Locally: MinIO (auto-provisioned by `vignemale run`).
+In prod: Scaleway Object Storage (or any S3-compatible backend).
 
-Config résolue depuis l'environnement :
-  - `VIGNEMALE_S3_ENDPOINT` (ex. http://127.0.0.1:9100 en local)
-  - `VIGNEMALE_S3_REGION`        (défaut: us-east-1)
+Config resolved from the environment:
+  - `VIGNEMALE_S3_ENDPOINT` (e.g. http://127.0.0.1:9100 locally)
+  - `VIGNEMALE_S3_REGION`        (default: us-east-1)
   - `VIGNEMALE_S3_ACCESS_KEY` / `VIGNEMALE_S3_SECRET_KEY`
-  - nom cloud du bucket : `VIGNEMALE_BUCKET_<NOM>` (défaut: le nom logique)
+  - cloud name of the bucket: `VIGNEMALE_BUCKET_<NAME>` (default: the logical name)
 """
 
 import os
 
 from . import _core
 
-# Buckets déclarés (pour collect / meta + provisioning local).
+# Declared buckets (for collect / meta + local provisioning).
 _buckets: list = []
 
 
 class BucketError(Exception):
-    """Erreur Object Storage (connexion, clé absente…) — message du core."""
+    """Object Storage error (connection, missing key…) — message from the core."""
 
 
 class Bucket:
@@ -46,9 +46,9 @@ class Bucket:
         endpoint = os.environ.get("VIGNEMALE_S3_ENDPOINT")
         if not endpoint:
             raise BucketError(
-                f"aucun backend S3 pour le bucket '{self.name}' : pose "
-                "VIGNEMALE_S3_ENDPOINT (+ ACCESS_KEY / SECRET_KEY), ou lance via "
-                "`vignemale run` qui provisionne MinIO en local"
+                f"no S3 backend for bucket '{self.name}': set "
+                "VIGNEMALE_S3_ENDPOINT (+ ACCESS_KEY / SECRET_KEY), or launch via "
+                "`vignemale run` which provisions MinIO locally"
             )
         return (
             endpoint,

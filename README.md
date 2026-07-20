@@ -1,107 +1,107 @@
 # Vignemale
 
-**Déploie tes agents IA en production sur ton cloud Scaleway, depuis Python, sans ops.**
+**Deploy your AI agents to production on your Scaleway cloud, from Python, without ops.**
 
-> Infrastructure-from-Code (façon Encore) : cœur **Rust** + binding/SDK **Python**.
-> Vision produit → [`../anvil/VISION.md`](../anvil/VISION.md) · Plan de portage → [`../DEV-PLAN.md`](../DEV-PLAN.md)
+> Infrastructure-from-Code (Encore-style): **Rust** core + **Python** binding/SDK.
+> Product vision → [`../anvil/VISION.md`](../anvil/VISION.md) · Porting plan → [`../DEV-PLAN.md`](../DEV-PLAN.md)
 
 ---
 
-## 🧭 Comment ça marche
+## 🧭 How it works
 
 ```
-proto/vignemale/…            ← SOURCE DE VÉRITÉ (schémas meta / infra / runtime)
-        │  build.rs (prost) génère les types Rust
+proto/vignemale/…            ← SOURCE OF TRUTH (meta / infra / runtime schemas)
+        │  build.rs (prost) generates the Rust types
         ▼
-runtimes/core/  (Rust)       ← le CŒUR : lit les protos, fournit les modules
+runtimes/core/  (Rust)       ← the CORE: reads the protos, provides the modules
         │                       config · names · secrets · objects (S3) · …
-        │  PyO3 (extension `vignemale._core`)
+        │  PyO3 (`vignemale._core` extension)
         ▼
 runtimes/python/ (binding + SDK)
         ▼
-   import vignemale          ← tu appelles le core depuis Python
+   import vignemale          ← you call the core from Python
 ```
 
-Un appel `vignemale.X()` traverse : **SDK Python → extension `_core` (PyO3) → module Rust du core → (types proto / aws-sdk / …)**. On développe le core **et** son binding ensemble, en tranches testables.
+A `vignemale.X()` call goes through: **Python SDK → `_core` extension (PyO3) → core Rust module → (proto types / aws-sdk / …)**. The core **and** its binding are developed together, in testable slices.
 
-## ✅ État actuel (modules portés depuis Encore, rebrandés)
+## ✅ Current state (modules ported from Encore, rebranded)
 
-| Module core | Rôle | Testable depuis Python |
+| Core module | Role | Testable from Python |
 |---|---|---|
-| `config` | charge la `RuntimeConfig` (env, base64/gzip, fichier) | `load_config_from_env`, `parse_runtime_config_b64` |
-| `secrets` | résout un `SecretData` (env / embedded, base64/gzip, sous-clé JSON) | `resolve_env_secret`, `resolve_b64_secret`, `resolve_json_key_secret` |
-| `objects` | Object Storage **S3-compatible** (Scaleway / MinIO) | `s3_roundtrip` |
-| `api` | serveur HTTP : `@api` **typé Pydantic**, **query/headers/body/params** selon la signature, **streaming SSE**, **erreurs au contrat Encore** (`{code, message, details}` — `APIError`/`HTTPError`), **CORS**, healthz | `vignemale.api`, `examples/typed.py` |
-| `auth` | `@auth_handler` (un par app) + `@api(..., auth=True)` — l'auth est jouée **par le core** avant le handler (vrai 401 même en streaming) ; données d'auth dans le paramètre `auth` | `examples/secure.py` |
-| `gateway` | **entrée unique multi-services** (façon Encore) : `vignemale gateway dossier/` route le trafic public par préfixe vers les services, **authentifie à l'edge**, forwarde **signé (svcauth)** avec auth + trace propagés — moteur axum (Pingora notable mais lourd ; même interface) | `tests/test_gateway.py` |
-| `clients` / `call` | **appels service-à-service** style Encore (`from vignemale.clients import catalog` → `catalog.get_item(id=7)`) : directs en local, **HTTP signé (HMAC)** une fois déployé — même code ; propagation de l'**auth** et du **trace-id W3C** | `examples/shop/`, `tests/test_call.py` |
-| `Bucket` | **Object Storage S3** (Scaleway/MinIO) servi par le core ; `put/get/list/exists/delete` ; **MinIO auto-provisionné** en local par `vignemale run`, config S3 via env en prod | `Bucket`, `examples/blog` |
-| `Secret` | secret **déclaré** dans le code, valeur résolue depuis l'environnement (jamais en clair) — `vignemale check` liste les secrets requis | `Secret("OPENAI_API_KEY").get()` |
-| `sqldb` | **Postgres** : pool (taille/timeouts configurables), **transactions** (`with db.transaction() as tx:` — rollback auto sur exception), **TLS** (CA custom via `VIGNEMALE_SQLDB_CA_CERT` — Managed DB Scaleway), chaque requête tracée (durée), types riches (**NUMERIC** sans perte, BYTEA, arrays, time/date/uuid) | `SQLDatabase`, `examples/todo.py` |
-| `datamodel` | **tables Pydantic** — façade mince : **l'ORM vit dans le core Rust** (génération SQL par **sea-query**, whitelist des colonnes, schéma auto + migration additive) ; CRUD typé sans SQL + requêtes custom attachées (`pros = sql("SELECT …")` → `list[User]`) ; champs tagués `PII(purpose=…)` | `Table`/`PII`/`sql`, `examples/copilote/` |
-| `rgpd` | **RGPD outillé** (le différenciateur) : `vignemale rgpd map` (carte des données), `export --subject` (droit d'accès), `forget --subject` (oubli — delete ou anonymize par table) — multi-services | `vignemale rgpd map examples/copilote` |
-| `observability` | **logs JSON structurés** (par requête : statut, durée, **request-id**), erreurs avec traceback corrélé, `vignemale.log` côté Python | `tests/test_observability.py` |
-| `Service` | regrouper les endpoints → apps **multi-services** ; un service = un **fichier** (`catalog.py`) ou un **dossier** (`catalog/` : `__init__.py` déclare le `Service`, endpoints dans ses modules — façon Encore) | `examples/shop/` |
-| `collect` | **extraction STATIQUE** (griffe, sans exécuter l'app) → **vrai `meta.proto`** multi-service (protojson), diffable en PR | `python -m vignemale.collect <chemin>` |
-| **CLI** | `vignemale run` (découvre + sert) · `vignemale check` (meta statique) | `vignemale --help` |
-| `names`, `proccfg`, `runtime_config` | newtypes, process allocation, vue métriques | (internes) |
+| `config` | loads the `RuntimeConfig` (env, base64/gzip, file) | `load_config_from_env`, `parse_runtime_config_b64` |
+| `secrets` | resolves a `SecretData` (env / embedded, base64/gzip, JSON sub-key) | `resolve_env_secret`, `resolve_b64_secret`, `resolve_json_key_secret` |
+| `objects` | **S3-compatible** Object Storage (Scaleway / MinIO) | `s3_roundtrip` |
+| `api` | HTTP server: **Pydantic-typed** `@api`, **query/headers/body/params** based on the signature, **SSE streaming**, **Encore-contract errors** (`{code, message, details}` — `APIError`/`HTTPError`), **CORS**, healthz | `vignemale.api`, `examples/typed.py` |
+| `auth` | `@auth_handler` (one per app) + `@api(..., auth=True)` — auth is executed **by the core** before the handler (a real 401 even when streaming); auth data available in the `auth` parameter | `examples/secure.py` |
+| `gateway` | **single multi-service entry point** (Encore-style): `vignemale gateway dir/` routes public traffic by prefix to the services, **authenticates at the edge**, forwards **signed (svcauth)** with auth + trace propagated — axum engine (Pingora considered but heavy; same interface) | `tests/test_gateway.py` |
+| `clients` / `call` | Encore-style **service-to-service calls** (`from vignemale.clients import catalog` → `catalog.get_item(id=7)`): direct calls locally, **signed HTTP (HMAC)** once deployed — same code; propagates the **auth** data and the **W3C trace-id** | `examples/shop/`, `tests/test_call.py` |
+| `Bucket` | **S3 Object Storage** (Scaleway/MinIO) served by the core; `put/get/list/exists/delete`; **MinIO auto-provisioned** locally by `vignemale run`, S3 config via env in prod | `Bucket`, `examples/blog` |
+| `Secret` | secret **declared** in code, value resolved from the environment (never in plain text) — `vignemale check` lists the required secrets | `Secret("OPENAI_API_KEY").get()` |
+| `sqldb` | **Postgres**: pool (configurable size/timeouts), **transactions** (`with db.transaction() as tx:` — auto rollback on exception), **TLS** (custom CA via `VIGNEMALE_SQLDB_CA_CERT` — Scaleway Managed DB), every query traced (duration), rich types (**NUMERIC** without precision loss, BYTEA, arrays, time/date/uuid) | `SQLDatabase`, `examples/todo.py` |
+| `datamodel` | **Pydantic tables** — thin facade: **the ORM lives in the Rust core** (SQL generated by **sea-query**, column whitelist, auto schema + additive migration); typed CRUD without SQL + custom queries attached to the model (`pros = sql("SELECT …")` → `list[User]`); fields tagged `PII(purpose=…)` | `Table`/`PII`/`sql`, `examples/copilot/` |
+| `gdpr` | **GDPR tooling built-in** (the differentiator): `vignemale gdpr map` (data map), `export --subject` (right of access), `forget --subject` (right to be forgotten — delete or anonymize per table) — multi-service | `vignemale gdpr map examples/copilot` |
+| `observability` | **structured JSON logs** (per request: status, duration, **request-id**), errors with a correlated traceback, `vignemale.log` on the Python side | `tests/test_observability.py` |
+| `Service` | group endpoints → **multi-service** apps; a service = one **file** (`catalog.py`) or one **directory** (`catalog/`: `__init__.py` declares the `Service`, endpoints in its modules — Encore-style) | `examples/shop/` |
+| `collect` | **STATIC extraction** (griffe, without executing the app) → **a real multi-service `meta.proto`** (protojson), diffable in a PR | `python -m vignemale.collect <path>` |
+| **CLI** | `vignemale run` (discovers + serves) · `vignemale check` (static meta) | `vignemale --help` |
+| `names`, `proccfg`, `runtime_config` | newtypes, process allocation, metrics view | (internal) |
 
-> Prochaines briques : `queue` (pubsub) · clients typés (OpenAPI) · provisioning Scaleway. Cf. `../DEV-PLAN.md`.
+> Next building blocks: `queue` (pubsub) · typed clients (OpenAPI) · Scaleway provisioning. See `../DEV-PLAN.md`.
 
 ## 📂 Structure
 
 ```
 vignemale/
-├── Cargo.toml                     workspace (members = core + python ; default = core)
-├── proto/vignemale/…              schémas .proto (dérivés d'Encore — cf. proto/ATTRIBUTION.md)
+├── Cargo.toml                     workspace (members = core + python; default = core)
+├── proto/vignemale/…              .proto schemas (derived from Encore — see proto/ATTRIBUTION.md)
 └── runtimes/
-    ├── core/                      cœur Rust
-    │   ├── build.rs               prost_build → types Rust
+    ├── core/                      Rust core
+    │   ├── build.rs               prost_build → Rust types
     │   └── src/                   config.rs · api/ · sqldb/ · secrets/ · objects.rs · …
-    └── python/                    binding PyO3 + SDK + CLI (le paquet `vignemale`)
-        ├── src/lib.rs             expose le core (module `_core`)
-        ├── python/vignemale/      le SDK — seule dépendance : pydantic (= ce qui part en PROD)
-        ├── python/vignemale_cli/  l'outil `vignemale` (extra [cli] : run·check·gen·build·rgpd)
-        └── tests/                 la suite pytest (SDK + CLI)
+    └── python/                    PyO3 binding + SDK + CLI (the `vignemale` package)
+        ├── src/lib.rs             exposes the core (`_core` module)
+        ├── python/vignemale/      the SDK — single dependency: pydantic (= what ships to PROD)
+        ├── python/vignemale_cli/  the `vignemale` tool ([cli] extra: run·check·gen·build·gdpr)
+        └── tests/                 the pytest suite (SDK + CLI)
 ```
 
-> Un seul paquet `vignemale`, deux usages : `pip install vignemale` = le **runtime**
-> embarqué en prod (dépendance unique : pydantic) ; `pip install vignemale[cli]`
-> ajoute l'**outillage développeur** (parser statique, provisioning local docker,
-> build d'image, RGPD) et la commande `vignemale`. La prod reste lean — l'extra
-> `[cli]` n'y est pas installé.
+> A single `vignemale` package, two uses: `pip install vignemale` = the **runtime**
+> embedded in prod (single dependency: pydantic); `pip install vignemale[cli]`
+> adds the **developer tooling** (static parser, local docker provisioning,
+> image build, GDPR) and the `vignemale` command. Prod stays lean — the `[cli]`
+> extra is never installed there.
 
-## 🔧 Prérequis
+## 🔧 Prerequisites
 
 - **Rust** (cargo) — https://rustup.rs
 - **protoc** — `brew install protobuf`
 - **uv** (venv + maturin) — `brew install uv`
-- **Docker** — uniquement pour le test Object Storage (MinIO)
+- **Docker** — only for the Object Storage test (MinIO)
 
-## ▶️ Build & test en local
+## ▶️ Build & test locally
 
 ```bash
 cd vignemale
 export PROTOC="$(which protoc)"
 
-# 1) compiler le cœur Rust seul (rapide)
+# 1) build the Rust core alone (fast)
 cargo build
 
-# 2) compiler le binding Python + SDK + CLI (dans un venv), avec les extras dev
+# 2) build the Python binding + SDK + CLI (in a venv), with the dev extras
 cd runtimes/python
-uv venv .venv && source .venv/bin/activate && uv pip install maturin   # 1re fois seulement
+uv venv .venv && source .venv/bin/activate && uv pip install maturin   # first time only
 source .venv/bin/activate
 maturin develop --extras dev
 
-# 3) lancer les tests
+# 3) run the tests
 python -m pytest tests/      # core (config/secrets) · API (unary/SSE/422/404) · CLI · collect (golden)
 
-# 4) la CLI
-vignemale check ../../examples/shop     # graphe meta (statique, multi-service)
-vignemale run   ../../examples/shop     # découvre les services + sert
+# 4) the CLI
+vignemale check ../../examples/shop     # meta graph (static, multi-service)
+vignemale run   ../../examples/shop     # discovers the services + serves
 ```
 
-### Écrire & lancer une app
+### Write & run an app
 
 ```python
 # app.py
@@ -109,243 +109,243 @@ from vignemale.api import api, serve
 
 @api(method="GET", path="/hello")
 def hello():
-    return {"msg": "bonjour"}
+    return {"msg": "hello"}
 
-@api(method="GET", path="/stream", stream=True)   # streaming (agent IA)
+@api(method="GET", path="/stream", stream=True)   # streaming (AI agent)
 def gen(stream):
-    for tok in ["sa", "lut", " !"]:
+    for tok in ["hel", "lo", "!"]:
         stream.write(tok)
 
 serve("127.0.0.1:8080")
 ```
 ```bash
 python app.py &
-curl -N http://127.0.0.1:8080/stream     # voit les tokens arriver au fil de l'eau
+curl -N http://127.0.0.1:8080/stream     # watch the tokens arrive as they stream in
 ```
 
-Un handler reçoit ce que sa **signature** déclare : paramètres de chemin
-(`/notes/:id` → `id`), `body` (JSON / modèle Pydantic), `query` (dict) et
-`headers` (dict). Les **erreurs** suivent le contrat Encore — corps
-`{code, message, details}` avec des codes gRPC-style mappés sur les statuts :
+A handler receives what its **signature** declares: path parameters
+(`/notes/:id` → `id`), `body` (JSON / Pydantic model), `query` (dict) and
+`headers` (dict). **Errors** follow the Encore contract — a
+`{code, message, details}` body with gRPC-style codes mapped to HTTP statuses:
 
 ```python
-raise APIError.not_found("note introuvable")          # → 404 {"code":"not_found",…}
-raise APIError("permission_denied", "admin requis")   # → 403
-# validation Pydantic ratée  → 400 invalid_argument (détail Pydantic dans details)
-# JSON malformé / body requis manquant → 400 · route inconnue → 404 structuré
-# exception non gérée → 500 {"code":"internal","details":{"request_id":…}}
+raise APIError.not_found("note not found")            # → 404 {"code":"not_found",…}
+raise APIError("permission_denied", "admin required") # → 403
+# failed Pydantic validation → 400 invalid_argument (Pydantic detail in details)
+# malformed JSON / missing required body → 400 · unknown route → structured 404
+# unhandled exception → 500 {"code":"internal","details":{"request_id":…}}
 ```
 
-CORS est ouvert par défaut (dev) ; `VIGNEMALE_CORS_ALLOW_ORIGINS=https://app.example.com`
-restreint. Health check : `GET /__vignemale/healthz`.
+CORS is open by default (dev); `VIGNEMALE_CORS_ALLOW_ORIGINS=https://app.example.com`
+restricts it. Health check: `GET /__vignemale/healthz`.
 
-**Servir un front** (Next.js exporté, Vite, SPA…) — façon `api.static`
-d'Encore, les fichiers sont servis par le **core Rust**, zéro Python par
-requête :
+**Serving a frontend** (exported Next.js, Vite, SPA…) — like Encore's
+`api.static`, the files are served by the **Rust core**, zero Python per
+request:
 
 ```python
 static_files(path="/", dir="out", spa=True)   # `next build` (output: 'export')
-# spa=True : toute route inconnue de l'API → index.html (routing client)
-static_files(path="/assets", dir="./public")  # ou sous un préfixe
+# spa=True: any route unknown to the API → index.html (client-side routing)
+static_files(path="/assets", dir="./public")  # or under a prefix
 ```
 
-Front + API dans le même process et le même deploy (`examples/fullstack/`).
-Pour du Next.js SSR complet (rendu serveur Node), même recommandation
-qu'Encore : héberge le front sur Vercel/Netlify et pointe-le sur l'API.
+Frontend + API in the same process and the same deploy (`examples/fullstack/`).
+For full Next.js SSR (Node server rendering), same recommendation as
+Encore: host the frontend on Vercel/Netlify and point it at the API.
 
-**Prod-ready, sans configuration** :
-- **arrêt gracieux** sur Ctrl-C / SIGTERM : healthz passe à 503 `shutting_down`,
-  plus aucune connexion acceptée, les requêtes en vol **terminent** (borné par
-  `VIGNEMALE_SHUTDOWN_TIMEOUT`, 10 s) — redéploiement sans requête coupée ;
-- **timeout** par endpoint (`@api(timeout=5)`) ou global
-  (`VIGNEMALE_REQUEST_TIMEOUT`, 30 s) → 504 `deadline_exceeded`, le handler
-  finit en arrière-plan et ses logs sont conservés ;
-- **limite de body** par endpoint (`@api(body_limit=1024)`) ou globale
-  (`VIGNEMALE_MAX_BODY`, 10 Mio) → 413 `resource_exhausted` ;
-- **séquence d'arrêt façon Encore** : healthz 503 → `VIGNEMALE_SHUTDOWN_KEEP_ACCEPTING`
-  s (on accepte encore, le temps que le load balancer cesse de router) → drain.
+**Prod-ready, with zero configuration**:
+- **graceful shutdown** on Ctrl-C / SIGTERM: healthz switches to 503 `shutting_down`,
+  no new connections are accepted, in-flight requests **run to completion** (bounded by
+  `VIGNEMALE_SHUTDOWN_TIMEOUT`, 10 s) — redeploy without cutting a single request;
+- **timeout** per endpoint (`@api(timeout=5)`) or global
+  (`VIGNEMALE_REQUEST_TIMEOUT`, 30 s) → 504 `deadline_exceeded`; the handler
+  finishes in the background and its logs are kept;
+- **body limit** per endpoint (`@api(body_limit=1024)`) or global
+  (`VIGNEMALE_MAX_BODY`, 10 MiB) → 413 `resource_exhausted`;
+- **Encore-style shutdown sequence**: healthz 503 → `VIGNEMALE_SHUTDOWN_KEEP_ACCEPTING`
+  seconds (still accepting, long enough for the load balancer to stop routing) → drain.
 
-**Authentification** (façon Encore — l'orchestration est dans le core Rust) :
+**Authentication** (Encore-style — the orchestration lives in the Rust core):
 
 ```python
-@auth_handler                       # UN par app
-def check(token):                   # Authorization: Bearer …, ou ?token=
+@auth_handler                       # ONE per app
+def check(token):                   # Authorization: Bearer …, or ?token=
     user = verify(token)
     return {"user_id": user.id} if user else None   # None → 401
 
 @api(method="GET", path="/me", auth=True)
-def me(auth):                       # reçoit les données d'auth s'il les déclare
+def me(auth):                       # receives the auth data if it declares it
     return {"you": auth["user_id"]}
 ```
 
-Le core authentifie AVANT d'appeler le handler — y compris pour les streams
-(vrai 401 avant d'ouvrir le flux SSE). Un endpoint `auth=True` sans
-`@auth_handler` déclaré refuse de démarrer. `vignemale check` expose
-`authHandler` et `accessType: AUTH` dans le meta.
+The core authenticates BEFORE calling the handler — including for streams
+(a real 401 before the SSE stream opens). An `auth=True` endpoint without a
+declared `@auth_handler` refuses to start. `vignemale check` exposes
+`authHandler` and `accessType: AUTH` in the meta.
 
-**Appels service-à-service** (le multi-service devient réel) — on importe le
-service et on l'appelle, façon Encore :
+**Service-to-service calls** (multi-service becomes real) — import the
+service and call it, Encore-style:
 
 ```python
 from vignemale.clients import catalog
 
 @api(method="POST", path="/orders")
 def create_order(body: Order) -> dict:
-    item = catalog.get_item(id=body.item_id)   # ← même code partout
+    item = catalog.get_item(id=body.item_id)   # ← same code everywhere
     ...
 ```
 
-(`vignemale.call("catalog", "get_item", id=…)` reste la primitive sous-jacente.)
+(`vignemale.call("catalog", "get_item", id=…)` remains the underlying primitive.)
 
-**Clients typés générés** — `vignemale gen monapp/` écrit
-`monapp/vignemale_clients/` (à committer, comme chez Encore) :
+**Generated typed clients** — `vignemale gen myapp/` writes
+`myapp/vignemale_clients/` (to be committed, as with Encore):
 
 ```python
 from vignemale_clients import catalog
 
-item = catalog.get_item(id=7)      # signature typée, autocomplétion pyright,
-                                   # retour RE-TYPÉ dans le modèle (Item)
+item = catalog.get_item(id=7)      # typed signature, pyright autocompletion,
+                                   # return value RE-TYPED into the model (Item)
 ```
 
-Les types des modèles sont importés sous `TYPE_CHECKING` : l'IDE les voit,
-le runtime n'exécute jamais le code de l'autre service pour annoter. À
-relancer après un changement d'API.
+Model types are imported under `TYPE_CHECKING`: the IDE sees them, and
+the runtime never executes the other service's code just to annotate. Re-run
+after an API change.
 
-Structure d'une app multi-services (un service = un dossier, comme Encore) :
+Structure of a multi-service app (one service = one directory, like Encore):
 
 ```
-monapp/
+myapp/
 ├── catalog/
 │   ├── __init__.py     ← catalog = Service("catalog")
-│   └── items.py        ← les @api du service
+│   └── items.py        ← the service's @api endpoints
 └── orders/
     ├── __init__.py     ← orders = Service("orders")
     └── create.py
 ```
 
-(Le style « un service = un fichier » reste supporté — les deux produisent
-exactement le même graphe meta.)
+(The "one service = one file" style is still supported — both produce
+exactly the same meta graph.)
 
-- **local** (`vignemale run dossier/`) : appel direct en mémoire, zéro HTTP ;
-- **déployé** : `VIGNEMALE_SERVICE_CATALOG=https://…` (posé par le deploy) →
-  l'appel part en HTTP sur la route interne `/__vignemale/call/…`, **signé
-  HMAC-SHA256** (`VIGNEMALE_SERVICE_SECRET`, anti-rejeu ±120 s) ;
-- le **trace-id W3C** (`traceparent`) traverse les services — une requête =
-  un trace_id dans les logs de tous les services impliqués ;
-- les **données d'auth sont propagées** (`x-vignemale-auth-data`) : un appel
-  interne vers un endpoint `auth=True` est de confiance, il ne repasse pas
-  par l'auth handler (façon Encore).
+- **local** (`vignemale run dir/`): direct in-memory call, zero HTTP;
+- **deployed**: `VIGNEMALE_SERVICE_CATALOG=https://…` (set by the deploy) →
+  the call goes over HTTP on the internal route `/__vignemale/call/…`, **signed
+  with HMAC-SHA256** (`VIGNEMALE_SERVICE_SECRET`, anti-replay ±120 s);
+- the **W3C trace-id** (`traceparent`) crosses service boundaries — one request =
+  one trace_id in the logs of every service involved;
+- **auth data is propagated** (`x-vignemale-auth-data`): an internal call
+  to an `auth=True` endpoint is trusted, it does not go through the
+  auth handler again (Encore-style).
 
-### Une app avec base de données, logs et erreurs (le « vrai projet »)
+### An app with a database, logs and errors (the "real project")
 
 ```python
-# todo.py — cf. examples/todo.py pour la version complète
+# todo.py — see examples/todo.py for the full version
 from vignemale import SQLDatabase, api, log, serve, HTTPError
 
-db = SQLDatabase("todo")     # le code déclare la base ; l'ENV fournit le DSN
+db = SQLDatabase("todo")     # the code declares the database; the ENV provides the DSN
 
 @api(method="POST", path="/todos")
 def create(body: NewTodo) -> Todo:
     row = db.query_row("INSERT INTO todos (title) VALUES ($1) RETURNING *", body.title)
-    log.info("todo créé", todo_id=row["id"])
+    log.info("todo created", todo_id=row["id"])
     return Todo(**row)
 ```
 
 ```bash
 vignemale run examples/todo.py
-# vignemale: démarrage du Postgres local (docker)…
-# vignemale: base Postgres « todo » prête (docker local)
-# vignemale: 4 endpoint(s) sur http://127.0.0.1:8080
+# vignemale: starting Docker…
+# vignemale: Postgres database "todo" ready (local docker)
+# vignemale: 4 endpoint(s) on http://127.0.0.1:8080
 ```
 
-**Zéro configuration** : `run` lit les ressources déclarées (statiquement, via
-`collect`) et provisionne le local AVANT d'importer l'app — un Postgres Docker
-partagé (`vignemale-postgres`, volume persistant), une database par
-`SQLDatabase("x")`, le DSN posé dans l'env. Si `VIGNEMALE_SQLDB_<NOM>` (ou
-`VIGNEMALE_SQLDB`) est déjà posé, il a priorité : même code, autre backend —
-c'est le provider switch. `vignemale check` liste aussi les bases déclarées
-(`sqlDatabases` dans le meta).
+**Zero configuration**: `run` reads the declared resources (statically, via
+`collect`) and provisions the local environment BEFORE importing the app — a shared
+Docker Postgres (`vignemale-postgres`, persistent volume), one database per
+`SQLDatabase("x")`, the DSN set in the env. If `VIGNEMALE_SQLDB_<NAME>` (or
+`VIGNEMALE_SQLDB`) is already set, it takes priority: same code, different backend —
+that's the provider switch. `vignemale check` also lists the declared databases
+(`sqlDatabases` in the meta).
 
-**Observabilité incluse, sans rien configurer** :
-- chaque réponse porte un header `x-vignemale-request-id` ;
-- chaque requête produit une ligne de log JSON sur stderr (endpoint, statut, `duration_ms`, `request_id`) ;
-- une exception non gérée → **500 propre** `{"error": "internal error", "request_id": …}` + le **traceback complet loggé** avec le même `request_id` ;
-- `vignemale.log` (`log.info("msg", champ=valeur)`) écrit au même format JSON que le core Rust ;
-- niveau via `VIGNEMALE_LOG` (`debug` | `info` | `warn` | `error`, défaut `info`).
+**Observability included, nothing to configure**:
+- every response carries an `x-vignemale-request-id` header;
+- every request produces a JSON log line on stderr (endpoint, status, `duration_ms`, `request_id`);
+- an unhandled exception → a **clean 500** `{"error": "internal error", "request_id": …}` + the **full traceback logged** with the same `request_id`;
+- `vignemale.log` (`log.info("msg", field=value)`) writes in the same JSON format as the Rust core;
+- level via `VIGNEMALE_LOG` (`debug` | `info` | `warn` | `error`, default `info`).
 
-### N'importe quel ORM (façon Encore)
+### Any ORM (Encore-style)
 
-On n'impose **pas** d'ORM. Comme Encore, on fournit la base, la *connection
-string* et les migrations ; ton ORM (SQLAlchemy, SQLModel, Tortoise…) fait le
-reste avec son propre driver :
+We do **not** impose an ORM. Like Encore, we provide the database, the *connection
+string* and the migrations; your ORM (SQLAlchemy, SQLModel, Tortoise…) does the
+rest with its own driver:
 
 ```python
-db = SQLDatabase("blog", migrations="migrations")   # .sql appliqués au `run`
+db = SQLDatabase("blog", migrations="migrations")   # .sql files applied on `run`
 engine = create_engine(db.connection_string.replace(
-    "postgres://", "postgresql+psycopg://", 1))      # SQLAlchemy branché
+    "postgres://", "postgresql+psycopg://", 1))      # SQLAlchemy hooked up
 ```
 
-`vignemale run` provisionne la base **et** applique les migrations non encore
-appliquées (suivi dans `_vignemale_migrations`, atomique, idempotent). Exemple
-complet : `examples/blog/`. Le `datamodel` Pydantic ci-dessous reste une
-**option** (c'est lui qui débloque le RGPD), pas une obligation.
+`vignemale run` provisions the database **and** applies any migrations not yet
+applied (tracked in `_vignemale_migrations`, atomic, idempotent). Full example:
+`examples/blog/`. The Pydantic `datamodel` below remains an
+**option** (it is what unlocks the GDPR tooling), not an obligation.
 
-### Modèles de données & RGPD (le différenciateur vs Encore)
+### Data models & GDPR (the differentiator vs Encore)
 
 ```python
 from vignemale.datamodel import Table, PII
 
 class User(Table):
-    __database__ = "users"          # la SQLDatabase qui héberge la table
-    __subject__ = "id"              # colonne qui identifie LA PERSONNE
-    id: Optional[int] = None        # BIGSERIAL PRIMARY KEY auto
-    email: str = PII(purpose="compte et contact")
+    __database__ = "users"          # the SQLDatabase hosting the table
+    __subject__ = "id"              # the column identifying THE PERSON
+    id: Optional[int] = None        # BIGSERIAL PRIMARY KEY, automatic
+    email: str = PII(purpose="account and contact")
     plan: str = "free"
 
-user = User.create(email="ada@ex.com")     # table créée automatiquement
-user = User.find_one(email="ada@ex.com")   # CRUD typé — zéro SQL
+user = User.create(email="ada@ex.com")     # table created automatically
+user = User.find_one(email="ada@ex.com")   # typed CRUD — zero SQL
 user.plan = "pro"; user.save()
 ```
 
-Le schéma EST le code : table créée au premier usage, colonnes ajoutées au
-modèle ajoutées à la table (migration additive), le SQL brut reste
-l'échappatoire pour les requêtes complexes.
+The schema IS the code: the table is created on first use, columns added to the
+model are added to the table (additive migration), and raw SQL remains the
+escape hatch for complex queries.
 
-**Validation des requêtes `sql()` au check** (le mécanisme `sqlx::query!`,
-déplacé au moment IfC) — `vignemale check --sql` applique d'abord les
-migrations additives puis fait un `PREPARE` Postgres de chaque requête, sans
-rien exécuter : syntaxe, tables, colonnes, types inférés. Une typo sort en
-CI, pas en prod :
+**`sql()` query validation at check time** (the `sqlx::query!` mechanism,
+moved to the IfC moment) — `vignemale check --sql` first applies the
+additive migrations then runs a Postgres `PREPARE` on each query, without
+executing anything: syntax, tables, columns, inferred types. A typo surfaces in
+CI, not in prod:
 
 ```
-$ vignemale check --sql monapp/
-  ✓ Produit.abordables  (float8) → id int8, name text, prix float8, stock int8
+$ vignemale check --sql myapp/
+  ✓ Product.affordable  (float8) → id int8, name text, price float8, stock int8
   ✗ Article.typo  db error: ERROR: column "promotion" does not exist
-vignemale: 1/2 requête(s) sql() invalide(s)        # exit code ≠ 0 → CI rouge
+vignemale: 1/2 sql() queries invalid               # exit code ≠ 0 → CI goes red
 ```
 
-Et comme le schéma déclare ses données personnelles, **le RGPD devient
-outillé** :
+And since the schema declares its personal data, **GDPR becomes
+tooled**:
 
 ```bash
-vignemale rgpd map    monapp/                 # carte des données (pour le DPO)
-vignemale rgpd export monapp/ --subject 42    # tout ce qu'on a sur la personne 42
-vignemale rgpd forget monapp/ --subject 42    # droit à l'oubli, multi-services
-#   par table : __on_forget__ = "delete" (la ligne saute)
-#               ou "anonymize" (PII caviardés, la ligne reste pour les stats)
+vignemale gdpr map    myapp/                 # data map (for the DPO)
+vignemale gdpr export myapp/ --subject 42    # everything held on subject 42
+vignemale gdpr forget myapp/ --subject 42    # right to be forgotten, multi-service
+#   per table: __on_forget__ = "delete" (the row is removed)
+#              or "anonymize" (PII redacted, the row stays for stats)
 ```
 
-> ⚠️ Des **preuves et des mécanismes**, pas une garantie de conformité —
-> l'humain (DPO/juriste) valide. Cf. `anvil/VISION.md`.
+> ⚠️ **Evidence and mechanisms**, not a compliance guarantee —
+> a human (DPO/lawyer) validates. See `anvil/VISION.md`.
 
-### Inclure les tests Postgres (sqldb)
+### Include the Postgres tests (sqldb)
 
 ```bash
 docker run -d --name vignemale-pg -p 5433:5432 -e POSTGRES_PASSWORD=vignemale postgres:16
 VIGNEMALE_TEST_PG=postgres://postgres:vignemale@127.0.0.1:5433/postgres python -m pytest tests/ -k sqldb
 ```
 
-### Inclure le test Object Storage (S3 via MinIO)
+### Include the Object Storage test (S3 via MinIO)
 
 ```bash
 docker run -d --name vignemale-minio -p 9100:9000 minio/minio server /data
@@ -353,28 +353,28 @@ VIGNEMALE_TEST_S3=http://127.0.0.1:9100 python -m pytest tests/ -k s3
 docker rm -f vignemale-minio
 ```
 
-## 🔁 Boucle de dev
+## 🔁 Dev loop
 
-Après toute modif du core ou du binding : `maturin develop` (depuis `runtimes/python`, venv actif, `PROTOC` exporté) puis relance `python -m pytest tests/`. Les tests Rust du core : `cargo test` (à la racine). La CI (`.github/workflows/ci.yml`) rejoue les deux.
+After any change to the core or the binding: `maturin develop` (from `runtimes/python`, venv active, `PROTOC` exported) then re-run `python -m pytest tests/`. The core's Rust tests: `cargo test` (at the root). CI (`.github/workflows/ci.yml`) replays both.
 
-> ⚠️ `PROTOC` doit être exporté à chaque build (le `build.rs` du core en a besoin).
+> ⚠️ `PROTOC` must be exported for every build (the core's `build.rs` needs it).
 
 ## 🏎 Performance (vs FastAPI)
 
-À process égal, le cycle HTTP en Rust (axum/tokio, GIL relâché pendant l'I/O)
-donne **2 à 2,8× FastAPI** ; un seul process Vignemale rivalise avec 4 workers
-uvicorn sur les lectures. Méthodo + chiffres honnêtes (y compris où FastAPI
-repasse devant) : [`benchmark/`](benchmark/).
+At equal process count, running the HTTP cycle in Rust (axum/tokio, GIL released
+during I/O) delivers **2 to 2.8× FastAPI**; a single Vignemale process rivals 4
+uvicorn workers on reads. Methodology + honest numbers (including where FastAPI
+pulls back ahead): [`benchmark/`](benchmark/).
 
 ```
-GET /hello   vignemale 42 570 req/s   fastapi 17 239 req/s   (1 process chacun)
-GET /items   vignemale 38 458 req/s   fastapi 13 581 req/s
-POST /orders vignemale 29 254 req/s   fastapi 13 940 req/s   (validation Pydantic)
+GET /hello   vignemale 42,570 req/s   fastapi 17,239 req/s   (1 process each)
+GET /items   vignemale 38,458 req/s   fastapi 13,581 req/s
+POST /orders vignemale 29,254 req/s   fastapi 13,940 req/s   (Pydantic validation)
 ```
 
-À configuration égale (`VIGNEMALE_WORKERS=N`, fork + SO_REUSEPORT), Vignemale
-passe devant FastAPI sur **tous** les scénarios, POST validé compris.
+At equal configuration (`VIGNEMALE_WORKERS=N`, fork + SO_REUSEPORT), Vignemale
+comes out ahead of FastAPI on **all** scenarios, validated POST included.
 
-## ⚖️ Licence
+## ⚖️ License
 
-Le code du cœur et les schémas sont **dérivés d'Encore** (MPL-2.0) — voir `proto/ATTRIBUTION.md`. Attribution obligatoire.
+The core code and the schemas are **derived from Encore** (MPL-2.0) — see `proto/ATTRIBUTION.md`. Attribution is mandatory.

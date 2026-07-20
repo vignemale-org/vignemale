@@ -1,13 +1,13 @@
-"""`vignemale link <name>` : rattache le dépôt local à un projet du panel.
+"""`vignemale link <name>`: links the local repo to a project in the panel.
 
-Le projet est créé côté Vignemale Cloud (panel « New project ») ; `link` écrit
-simplement `[tool.vignemale].app = "<name>"` dans le pyproject.toml local, de
-sorte que le prochain `vignemale deploy` pousse vers ce projet (le remote git est
-`/<app>.git`, voir deploy.py). Aucune dépendance réseau : c'est de la config locale.
+The project is created on Vignemale Cloud (panel "New project"); `link` simply
+writes `[tool.vignemale].app = "<name>"` into the local pyproject.toml, so
+that the next `vignemale deploy` pushes to that project (the git remote is
+`/<app>.git`, see deploy.py). No network dependency: it's local config.
 
-Pas de writer TOML en stdlib → édition texte prudente : on met à jour la clé si
-elle existe, on l'insère dans `[tool.vignemale]` si la section existe, sinon on
-crée la section (ou le fichier).
+No TOML writer in the stdlib → careful text editing: we update the key if
+it exists, insert it into `[tool.vignemale]` if the section exists, otherwise
+create the section (or the file).
 """
 
 import os
@@ -24,7 +24,7 @@ def _apply(text: str, app: str) -> str:
     line = f'app = "{app}"'
     lines = text.splitlines()
 
-    # Repère la section [tool.vignemale] (et ses bornes).
+    # Locate the [tool.vignemale] section (and its bounds).
     start = None
     for i, ln in enumerate(lines):
         if ln.strip() == "[tool.vignemale]":
@@ -36,7 +36,7 @@ def _apply(text: str, app: str) -> str:
         sep = "\n" if prefix and not prefix.endswith("\n\n") and prefix != "" else ""
         return f"{prefix}{sep}[tool.vignemale]\n{line}\n"
 
-    # Fin de section = prochaine ligne qui ouvre une table [..], sinon fin.
+    # End of section = next line that opens a table [..], otherwise the end.
     end = len(lines)
     for j in range(start + 1, len(lines)):
         if re.match(r"\s*\[", lines[j]):
@@ -55,7 +55,7 @@ def _apply(text: str, app: str) -> str:
 def link(name: str, path: str = ".") -> int:
     app = _slug(name)
     if not app:
-        print("Nom de projet invalide (lettres, chiffres, tirets).", file=sys.stderr)
+        print("Invalid project name (letters, digits, dashes).", file=sys.stderr)
         return 1
 
     pyproject = os.path.join(path, "pyproject.toml")
@@ -67,6 +67,6 @@ def link(name: str, path: str = ".") -> int:
     with open(pyproject, "w", encoding="utf-8") as f:
         f.write(_apply(text, app))
 
-    print(f"vignemale: ✓ dépôt rattaché au projet « {app} ».")
-    print("vignemale: déploie avec  vignemale deploy")
+    print(f'vignemale: ✓ repo linked to project "{app}".')
+    print("vignemale: deploy with  vignemale deploy")
     return 0

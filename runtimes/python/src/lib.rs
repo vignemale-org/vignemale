@@ -1,5 +1,5 @@
-//! Binding PyO3 du cœur Vignemale — le miroir Python de `runtimes/js` (NAPI) d'Encore.
-//! Expose `vignemale-runtime-core` à Python pour qu'on puisse tester au fil de l'eau.
+//! PyO3 binding for the Vignemale core — the Python mirror of Encore's `runtimes/js` (NAPI).
+//! Exposes `vignemale-runtime-core` to Python so we can test as we go.
 
 use std::sync::Arc;
 
@@ -15,20 +15,20 @@ use vignemale_runtime_core::secrets;
 use vignemale_runtime_core::sqldb;
 use vignemale_runtime_core::vignemale::runtime::v1 as rt;
 
-/// Runtime tokio partagé du binding (sqldb & co) — créé paresseusement.
+/// Shared tokio runtime for the binding (sqldb & co) — created lazily.
 fn shared_runtime() -> &'static tokio::runtime::Runtime {
     static RT: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
     RT.get_or_init(|| tokio::runtime::Runtime::new().expect("tokio runtime"))
 }
 
-/// Version de la crate binding.
+/// Version of the binding crate.
 #[pyfunction]
 fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
-/// Helper de test : construit une `RuntimeConfig` de démo et la renvoie en base64
-/// (le format que le core sait décoder depuis l'environnement).
+/// Test helper: builds a demo `RuntimeConfig` and returns it in base64
+/// (the format the core can decode from the environment).
 #[pyfunction]
 fn encode_demo_config(app_id: String, services: Vec<String>) -> String {
     let cfg = rt::RuntimeConfig {
@@ -53,7 +53,7 @@ fn encode_demo_config(app_id: String, services: Vec<String>) -> String {
     base64::engine::general_purpose::STANDARD.encode(cfg.encode_to_vec())
 }
 
-/// Résume une `RuntimeConfig` en dict Python `{app_id, hosted_services}`.
+/// Summarizes a `RuntimeConfig` into a Python dict `{app_id, hosted_services}`.
 fn summarize(py: Python<'_>, cfg: &rt::RuntimeConfig) -> PyResult<PyObject> {
     let d = PyDict::new_bound(py);
     let app_id = cfg
@@ -71,7 +71,7 @@ fn summarize(py: Python<'_>, cfg: &rt::RuntimeConfig) -> PyResult<PyObject> {
     Ok(d.into())
 }
 
-/// Décode une `RuntimeConfig` base64 et renvoie son résumé.
+/// Decodes a base64 `RuntimeConfig` and returns its summary.
 #[pyfunction]
 fn parse_runtime_config_b64(py: Python<'_>, b64: String) -> PyResult<PyObject> {
     let bytes = base64::engine::general_purpose::STANDARD
@@ -82,8 +82,8 @@ fn parse_runtime_config_b64(py: Python<'_>, b64: String) -> PyResult<PyObject> {
     summarize(py, &cfg)
 }
 
-/// Charge la `RuntimeConfig` depuis l'environnement via le core (`config`).
-/// Renvoie `None` si aucune config n'est présente.
+/// Loads the `RuntimeConfig` from the environment via the core (`config`).
+/// Returns `None` if no config is present.
 #[pyfunction]
 fn load_config_from_env(py: Python<'_>) -> PyResult<Option<PyObject>> {
     match config::runtime_config_from_env() {
@@ -93,7 +93,7 @@ fn load_config_from_env(py: Python<'_>) -> PyResult<Option<PyObject>> {
     }
 }
 
-// --- secrets (module `secrets` du core) ---
+// --- secrets (the core's `secrets` module) ---
 
 fn resolve_to_bytes(py: Python<'_>, data: rt::SecretData) -> PyResult<Py<PyBytes>> {
     let mgr = secrets::Manager::new(vec![]);
@@ -105,7 +105,7 @@ fn resolve_to_bytes(py: Python<'_>, data: rt::SecretData) -> PyResult<Py<PyBytes
     Ok(PyBytes::new_bound(py, &bytes).unbind())
 }
 
-/// Résout un secret lu depuis une variable d'environnement.
+/// Resolves a secret read from an environment variable.
 #[pyfunction]
 fn resolve_env_secret(py: Python<'_>, name: String) -> PyResult<Py<PyBytes>> {
     resolve_to_bytes(
@@ -118,7 +118,7 @@ fn resolve_env_secret(py: Python<'_>, name: String) -> PyResult<Py<PyBytes>> {
     )
 }
 
-/// Résout un secret embarqué encodé en base64.
+/// Resolves an embedded secret encoded in base64.
 #[pyfunction]
 fn resolve_b64_secret(py: Python<'_>, value_b64: String) -> PyResult<Py<PyBytes>> {
     resolve_to_bytes(
@@ -131,7 +131,7 @@ fn resolve_b64_secret(py: Python<'_>, value_b64: String) -> PyResult<Py<PyBytes>
     )
 }
 
-/// Résout une sous-clé d'un secret JSON embarqué.
+/// Resolves a sub-key of an embedded JSON secret.
 #[pyfunction]
 fn resolve_json_key_secret(py: Python<'_>, json: String, key: String) -> PyResult<Py<PyBytes>> {
     resolve_to_bytes(
@@ -146,8 +146,8 @@ fn resolve_json_key_secret(py: Python<'_>, json: String, key: String) -> PyResul
 
 // --- objects (provider Object Storage / S3) ---
 
-/// Test de bout en bout du provider S3 : crée le bucket (idempotent), écrit la
-/// valeur sous `key`, puis la relit. Renvoie la valeur relue.
+/// End-to-end test of the S3 provider: creates the bucket (idempotent), writes
+/// the value under `key`, then reads it back. Returns the value read back.
 #[pyfunction]
 #[pyo3(signature = (endpoint, region, access_key, secret_key, bucket, key, value))]
 #[allow(clippy::too_many_arguments)]
@@ -198,7 +198,7 @@ fn s3_roundtrip(
     Ok(PyBytes::new_bound(py, &result).unbind())
 }
 
-// --- objects (Bucket) : opérations S3 via le core, config résolue par le SDK ---
+// --- objects (Bucket): S3 operations via the core, config resolved by the SDK ---
 
 #[allow(clippy::too_many_arguments)]
 fn bucket_handle(
@@ -232,7 +232,7 @@ fn bucket_handle(
     objects::bucket_from_cluster(&cluster, &b)
 }
 
-/// Une opération bucket : `op` ∈ {create, put, get, exists, list, delete}.
+/// A bucket operation: `op` ∈ {create, put, get, exists, list, delete}.
 /// `cfg` = (endpoint, region, access_key, secret_key, cloud_name).
 #[pyfunction]
 #[pyo3(signature = (cfg, op, key=String::new(), value=None))]
@@ -250,7 +250,7 @@ fn bucket_op(
         Keys(Vec<String>),
     }
     let (endpoint, region, access_key, secret_key, cloud_name) = cfg;
-    // tout l'async dans UN block_on (GIL relâché) ; conversion PyObject après.
+    // all the async in ONE block_on (GIL released); PyObject conversion after.
     let result: anyhow::Result<R> = py.allow_threads(|| {
         shared_runtime().block_on(async move {
             let bucket = bucket_handle(endpoint, region, access_key, secret_key, cloud_name)?;
@@ -270,7 +270,7 @@ fn bucket_op(
                     bucket.delete(&key).await?;
                     R::None
                 }
-                other => anyhow::bail!("opération bucket inconnue: {other}"),
+                other => anyhow::bail!("unknown bucket operation: {other}"),
             })
         })
     });
@@ -282,15 +282,15 @@ fn bucket_op(
     }
 }
 
-// --- sqldb (Postgres) : requêtes via le pool du core, params/lignes en JSON ---
+// --- sqldb (Postgres): queries via the core's pool, params/rows as JSON ---
 
 fn parse_sql_params(params_json: &str) -> PyResult<Vec<sqldb::SqlParam>> {
     let values: Vec<serde_json::Value> = serde_json::from_str(params_json)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("params invalides: {e}")))?;
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("invalid params: {e}")))?;
     Ok(values.into_iter().map(sqldb::SqlParam::from_json).collect())
 }
 
-/// Exécute une requête SELECT et renvoie les lignes (JSON : tableau d'objets).
+/// Runs a SELECT query and returns the rows (JSON: array of objects).
 #[pyfunction]
 fn sqldb_query(py: Python<'_>, dsn: String, sql: String, params_json: String) -> PyResult<String> {
     let params = parse_sql_params(&params_json)?;
@@ -304,7 +304,7 @@ fn sqldb_query(py: Python<'_>, dsn: String, sql: String, params_json: String) ->
     .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:#}")))
 }
 
-/// Exécute un script SQL multi-instructions (migrations).
+/// Runs a multi-statement SQL script (migrations).
 #[pyfunction]
 fn sqldb_batch(py: Python<'_>, dsn: String, sql: String) -> PyResult<()> {
     py.allow_threads(|| {
@@ -316,7 +316,7 @@ fn sqldb_batch(py: Python<'_>, dsn: String, sql: String) -> PyResult<()> {
     .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:#}")))
 }
 
-/// Valide une requête par PREPARE (sans l'exécuter) → JSON {params, columns}.
+/// Validates a query via PREPARE (without running it) → JSON {params, columns}.
 #[pyfunction]
 fn sqldb_prepare(py: Python<'_>, dsn: String, sql: String) -> PyResult<String> {
     py.allow_threads(|| {
@@ -329,7 +329,7 @@ fn sqldb_prepare(py: Python<'_>, dsn: String, sql: String) -> PyResult<String> {
     .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:#}")))
 }
 
-/// Exécute une commande (INSERT/UPDATE/DELETE/DDL), renvoie les lignes affectées.
+/// Runs a command (INSERT/UPDATE/DELETE/DDL), returns the affected rows.
 #[pyfunction]
 fn sqldb_execute(
     py: Python<'_>,
@@ -347,12 +347,12 @@ fn sqldb_execute(
     .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:#}")))
 }
 
-// --- ORM (le moteur vit dans le CORE ; les SDKs envoient un descripteur) ---
+// --- ORM (the engine lives in the CORE; the SDKs send a descriptor) ---
 
-/// Opération ORM générique : `op` ∈ {ensure, insert, get, find, count,
-/// update, update_where, delete, delete_where}. `schema_json` décrit la
-/// table ; `args_json` porte {values, where, pk} selon l'opération.
-/// Renvoie le résultat en JSON (ligne, lignes, compteur ou null).
+/// Generic ORM operation: `op` ∈ {ensure, insert, get, find, count,
+/// update, update_where, delete, delete_where}. `schema_json` describes the
+/// table; `args_json` carries {values, where, pk} depending on the operation.
+/// Returns the result as JSON (row, rows, count, or null).
 #[pyfunction]
 fn sqldb_orm(
     py: Python<'_>,
@@ -362,9 +362,9 @@ fn sqldb_orm(
     args_json: String,
 ) -> PyResult<String> {
     let schema: sqldb::orm::TableSchema = serde_json::from_str(&schema_json)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("schéma invalide: {e}")))?;
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("invalid schema: {e}")))?;
     let args: serde_json::Value = serde_json::from_str(&args_json)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("args invalides: {e}")))?;
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("invalid args: {e}")))?;
     let empty = serde_json::Map::new();
     let map_of = |key: &str| -> serde_json::Map<String, serde_json::Value> {
         args.get(key)
@@ -409,7 +409,7 @@ fn sqldb_orm(
                 "delete_where" => orm::delete_where(&pool, &schema, &map_of("where"))
                     .await?
                     .into(),
-                other => anyhow::bail!("opération ORM inconnue: {other:?}"),
+                other => anyhow::bail!("unknown ORM operation: {other:?}"),
             };
             Ok(result)
         })
@@ -418,9 +418,9 @@ fn sqldb_orm(
     .map_err(|e: anyhow::Error| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:#}")))
 }
 
-// --- sqldb : transactions (begin/commit/rollback sans lifetime, façon Encore) ---
+// --- sqldb: transactions (begin/commit/rollback without lifetime, Encore style) ---
 
-/// Ouvre une transaction et renvoie son identifiant.
+/// Opens a transaction and returns its identifier.
 #[pyfunction]
 fn sqldb_begin(py: Python<'_>, dsn: String) -> PyResult<u64> {
     py.allow_threads(|| {
@@ -432,7 +432,7 @@ fn sqldb_begin(py: Python<'_>, dsn: String) -> PyResult<u64> {
     .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:#}")))
 }
 
-/// SELECT dans une transaction → lignes (JSON).
+/// SELECT within a transaction → rows (JSON).
 #[pyfunction]
 fn sqldb_tx_query(
     py: Python<'_>,
@@ -446,7 +446,7 @@ fn sqldb_tx_query(
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:#}")))
 }
 
-/// Commande dans une transaction → lignes affectées.
+/// Command within a transaction → affected rows.
 #[pyfunction]
 fn sqldb_tx_execute(
     py: Python<'_>,
@@ -471,10 +471,10 @@ fn sqldb_tx_rollback(py: Python<'_>, tx: u64) -> PyResult<()> {
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:#}")))
 }
 
-// --- api (serveur HTTP) : le binding implémente le trait `Handler` du core
-//     en appelant le handler Python (avec le GIL), façon `runtimes/js` d'Encore. ---
+// --- api (HTTP server): the binding implements the core's `Handler` trait
+//     by calling the Python handler (with the GIL), Encore's `runtimes/js` style. ---
 
-/// Formate l'exception Python (traceback complet) pour les logs structurés.
+/// Formats the Python exception (full traceback) for structured logs.
 fn format_py_err(py: Python<'_>, e: &PyErr) -> String {
     let fallback = || e.to_string();
     let Ok(tb_mod) = py.import_bound("traceback") else {
@@ -490,9 +490,9 @@ fn format_py_err(py: Python<'_>, e: &PyErr) -> String {
         .unwrap_or_else(|_| fallback())
 }
 
-/// Implémente le trait `AuthHandler` du core en appelant la fonction Python
-/// (`@auth_handler`). `None` → 401 ; APIError levée → son statut/corps ;
-/// autre exception → 500 (traceback loggé).
+/// Implements the core's `AuthHandler` trait by calling the Python function
+/// (`@auth_handler`). `None` → 401; a raised APIError → its status/body;
+/// any other exception → 500 (traceback logged).
 struct PyAuthHandler {
     func: Py<PyAny>,
 }
@@ -504,7 +504,7 @@ impl api::AuthHandler for PyAuthHandler {
                 if result.is_none() {
                     return api::AuthOutcome::Denied {
                         status: 401,
-                        body: api::error_json("unauthenticated", "token invalide", None),
+                        body: api::error_json("unauthenticated", "invalid token", None),
                     };
                 }
                 match py
@@ -517,7 +517,7 @@ impl api::AuthHandler for PyAuthHandler {
                         status: 500,
                         body: api::error_json(
                             "internal",
-                            "données d'auth non sérialisables",
+                            "auth data not serializable",
                             None,
                         ),
                     },
@@ -533,7 +533,7 @@ impl api::AuthHandler for PyAuthHandler {
                 tracing::error!(
                     target: "vignemale::app",
                     traceback = %format_py_err(py, &e),
-                    "exception dans l'auth handler"
+                    "exception in the auth handler"
                 );
                 api::AuthOutcome::Denied {
                     status: 500,
@@ -555,18 +555,18 @@ impl api::Handler for PyHandler {
             Ok(body) => api::Response { status: 200, body },
             Err(e) => http_error_response(py, &e).unwrap_or_else(|| {
                 if e.is_instance_of::<pyo3::exceptions::PyValueError>(py)
-                    && e.to_string().contains("corps JSON invalide")
+                    && e.to_string().contains("invalid JSON body")
                 {
                     return api::Response {
                         status: 400,
-                        body: api::error_json("invalid_argument", "corps JSON invalide", None),
+                        body: api::error_json("invalid_argument", "invalid JSON body", None),
                     };
                 }
                 tracing::error!(
                     target: "vignemale::app",
                     request_id = %request_id,
                     traceback = %format_py_err(py, &e),
-                    "exception non gérée dans le handler"
+                    "unhandled exception in the handler"
                 );
                 api::Response {
                     status: 500,
@@ -581,8 +581,8 @@ impl api::Handler for PyHandler {
     }
 }
 
-/// Si l'exception est un `HTTPError` du SDK (attributs `vignemale_status` /
-/// `vignemale_body`), construit la réponse HTTP correspondante.
+/// If the exception is an SDK `HTTPError` (attributes `vignemale_status` /
+/// `vignemale_body`), builds the corresponding HTTP response.
 fn http_error_response(py: Python<'_>, e: &PyErr) -> Option<api::Response> {
     let val = e.value_bound(py);
     let status: u16 = val.getattr("vignemale_status").ok()?.extract().ok()?;
@@ -593,9 +593,9 @@ fn http_error_response(py: Python<'_>, e: &PyErr) -> Option<api::Response> {
     })
 }
 
-/// Construit les kwargs communs : params de chemin, `query` (dict), `headers`
-/// (dict, noms en minuscules) et `body` (JSON parsé) si présent. Le SDK filtre
-/// ensuite selon la signature du handler.
+/// Builds the common kwargs: path params, `query` (dict), `headers`
+/// (dict, lowercase names) and `body` (parsed JSON) if present. The SDK then
+/// filters them according to the handler's signature.
 fn build_kwargs<'py>(
     py: Python<'py>,
     req: &api::Request,
@@ -622,7 +622,7 @@ fn build_kwargs<'py>(
     }
     if !req.body.is_empty() {
         let invalid =
-            || pyo3::exceptions::PyValueError::new_err("corps JSON invalide");
+            || pyo3::exceptions::PyValueError::new_err("invalid JSON body");
         let body_str = std::str::from_utf8(&req.body).map_err(|_| invalid())?;
         let parsed = py
             .import_bound("json")?
@@ -633,7 +633,7 @@ fn build_kwargs<'py>(
     Ok(kwargs)
 }
 
-/// Appelle le handler Python puis sérialise le retour en JSON.
+/// Calls the Python handler then serializes the return value to JSON.
 fn call_py_handler(py: Python<'_>, func: &Py<PyAny>, req: api::Request) -> PyResult<Vec<u8>> {
     let kwargs = build_kwargs(py, &req)?;
     let result = func.bind(py).call((), Some(&kwargs))?;
@@ -644,19 +644,19 @@ fn call_py_handler(py: Python<'_>, func: &Py<PyAny>, req: api::Request) -> PyRes
     Ok(dumped.into_bytes())
 }
 
-// --- streaming (SSE) : le binding implémente le trait `StreamHandler` du core ---
+// --- streaming (SSE): the binding implements the core's `StreamHandler` trait ---
 
 #[pyclass]
 struct PyStreamSink {
-    // Option : le binding ferme le flux explicitement quand le handler
-    // retourne — la fin du stream ne dépend pas du GC Python (un cycle de
-    // références côté app retiendrait le canal ouvert indéfiniment).
+    // Option: the binding closes the stream explicitly when the handler
+    // returns — the end of the stream does not depend on Python's GC (a
+    // reference cycle on the app side would keep the channel open indefinitely).
     sink: std::sync::Mutex<Option<api::StreamSink>>,
 }
 
 #[pymethods]
 impl PyStreamSink {
-    /// Pousse un fragment dans le flux SSE. `false` si le flux est fermé.
+    /// Pushes a fragment into the SSE stream. `false` if the stream is closed.
     fn write(&self, py: Python<'_>, chunk: String) -> bool {
         let sink = self.sink.lock().expect("sink lock").clone();
         match sink {
@@ -685,7 +685,7 @@ impl api::StreamHandler for PyStreamHandler {
                     target: "vignemale::app",
                     request_id = %request_id,
                     traceback = %format_py_err(py, &e),
-                    "exception non gérée dans le handler streaming"
+                    "unhandled exception in the streaming handler"
                 );
             }
         });
@@ -704,21 +704,21 @@ fn call_py_stream_handler(
     })?;
     kwargs.set_item("stream", py_sink.clone_ref(py))?;
     let result = func.bind(py).call((), Some(&kwargs));
-    // handler terminé (succès ou non) → on ferme le flux SSE explicitement
+    // handler finished (success or not) → we close the SSE stream explicitly
     py_sink.borrow(py).close();
     result?;
     Ok(())
 }
 
-/// Séquence d'arrêt gracieux (miroir du shutdown.rs d'Encore) :
-/// 1. healthz → 503 immédiatement (le load balancer le voit) ;
-/// 2. `keep_accepting` : on CONTINUE d'accepter pendant cette fenêtre, le temps
-///    que le LB cesse de router vers nous (sinon il enverrait des requêtes à un
-///    process qui n'accepte plus → connexions refusées). Réglé par
-///    `VIGNEMALE_SHUTDOWN_KEEP_ACCEPTING` (secondes ; 0 par défaut, utile en
-///    prod K8s/Scaleway) ;
-/// 3. stop-accept + drain des requêtes en vol, borné par
-///    `VIGNEMALE_SHUTDOWN_TIMEOUT` (10 s par défaut).
+/// Graceful shutdown sequence (mirror of Encore's shutdown.rs):
+/// 1. healthz → 503 immediately (the load balancer sees it);
+/// 2. `keep_accepting`: we KEEP accepting during this window, giving the LB
+///    time to stop routing to us (otherwise it would send requests to a
+///    process that no longer accepts → refused connections). Set by
+///    `VIGNEMALE_SHUTDOWN_KEEP_ACCEPTING` (seconds; 0 by default, useful in
+///    K8s/Scaleway prod);
+/// 3. stop-accept + drain in-flight requests, bounded by
+///    `VIGNEMALE_SHUTDOWN_TIMEOUT` (10 s by default).
 fn graceful_shutdown(
     py: Python<'_>,
     shutting_down: &Arc<std::sync::atomic::AtomicBool>,
@@ -743,8 +743,8 @@ fn graceful_shutdown(
     });
 }
 
-/// Démarre le serveur HTTP avec les endpoints donnés (bloque jusqu'à l'arrêt).
-/// `endpoints` = liste de (name, method, path, handler, stream, auth,
+/// Starts the HTTP server with the given endpoints (blocks until shutdown).
+/// `endpoints` = list of (name, method, path, handler, stream, auth,
 /// timeout_s, body_limit).
 #[pyfunction]
 #[pyo3(signature = (endpoints, addr, auth_handler=None, statics=vec![], reuse_port=false))]
@@ -769,7 +769,7 @@ fn serve(
 ) -> PyResult<()> {
     let socket: std::net::SocketAddr = addr
         .parse()
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("adresse invalide: {e}")))?;
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("invalid address: {e}")))?;
     let mut mgr = api::Manager::new();
     for (name, method, path, func, stream, requires_auth, timeout_s, body_limit, expose) in endpoints
     {
@@ -805,18 +805,18 @@ fn serve(
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let shutting_down = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let sd_flag = shutting_down.clone();
-    // Le serveur tourne sur un thread dédié (qui ne tient pas le GIL) ; le thread
-    // principal relâche le GIL et attend, pour que les handlers puissent l'acquérir.
+    // The server runs on a dedicated thread (which does not hold the GIL); the
+    // main thread releases the GIL and waits, so handlers can acquire it.
     let server_thread = std::thread::spawn(move || -> Result<(), String> {
         let runtime = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
         runtime
             .block_on(mgr.serve(socket, shutdown_rx, sd_flag, reuse_port))
             .map_err(|e| e.to_string())
     });
-    // Attente par tranches (pas un `join` bloquant) : entre deux tranches on
-    // repasse par `check_signals`, sinon Ctrl-C ne lèverait jamais
-    // KeyboardInterrupt — le signal serait noté par CPython mais l'interpréteur
-    // ne reprendrait jamais la main.
+    // Wait in slices (not a blocking `join`): between two slices we go back
+    // through `check_signals`, otherwise Ctrl-C would never raise
+    // KeyboardInterrupt — the signal would be recorded by CPython but the
+    // interpreter would never regain control.
     loop {
         if server_thread.is_finished() {
             let outcome = match server_thread.join() {
@@ -833,8 +833,8 @@ fn serve(
     }
 }
 
-/// Démarre la GATEWAY : route le trafic public par préfixe de path vers les
-/// services backend, authentifie à l'edge, forwarde signé. `routes` = liste de
+/// Starts the GATEWAY: routes public traffic by path prefix to the backend
+/// services, authenticates at the edge, forwards signed. `routes` = list of
 /// (prefix, service, upstream_url, requires_auth).
 #[pyfunction]
 #[pyo3(signature = (routes, addr, auth_handler=None, reuse_port=false))]
@@ -847,7 +847,7 @@ fn serve_gateway(
 ) -> PyResult<()> {
     let socket: std::net::SocketAddr = addr
         .parse()
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("adresse invalide: {e}")))?;
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("invalid address: {e}")))?;
     let gw_routes: Vec<api::GatewayRoute> = routes
         .into_iter()
         .map(|(prefix, service, upstream, requires_auth)| api::GatewayRoute {

@@ -1,4 +1,4 @@
-"""Pipeline Python → PyO3 → core Rust : config, secrets, objects (ex-smoke.py)."""
+"""Python → PyO3 → Rust core pipeline: config, secrets, objects (formerly smoke.py)."""
 
 import base64
 import os
@@ -42,7 +42,7 @@ def test_secret_json_key():
 
 @pytest.mark.skipif(
     not os.environ.get("VIGNEMALE_TEST_S3"),
-    reason="pose VIGNEMALE_TEST_S3 (endpoint MinIO) pour l'activer",
+    reason="set VIGNEMALE_TEST_S3 (MinIO endpoint) to enable it",
 )
 def test_s3_roundtrip():
     out = v.s3_roundtrip(

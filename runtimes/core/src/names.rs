@@ -1,5 +1,5 @@
-// Porté de `encore/runtimes/core/src/names.rs`, rebrandé (EncoreName -> VignemaleName).
-// Newtypes pour les noms logiques / cloud / endpoints.
+// Ported from `encore/runtimes/core/src/names.rs`, rebranded (EncoreName -> VignemaleName).
+// Newtypes for logical / cloud / endpoint names.
 
 use anyhow::Context;
 use std::borrow::Borrow;

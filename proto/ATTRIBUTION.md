@@ -1,23 +1,25 @@
-# Attribution & licence
+# Attribution & license
 
-Les schémas `.proto` de ce dossier sont **dérivés / adaptés** des schémas du projet
-**Encore** ([encoredev/encore](https://github.com/encoredev/encore)), distribué sous
-**Mozilla Public License 2.0 (MPL-2.0)**. Ils ont été **rebrandés** en `vignemale.*`,
-mais restent des **modifications d'œuvres sous MPL**.
+The `.proto` schemas in this folder are **derived / adapted** from the schemas of
+the **Encore** project ([encoredev/encore](https://github.com/encoredev/encore)),
+distributed under the **Mozilla Public License 2.0 (MPL-2.0)**. They have been
+**rebranded** to `vignemale.*`, but they remain **modifications of MPL-licensed
+works**.
 
-⚠️ La MPL est un copyleft **au fichier** : ces fichiers (et leurs modifications)
-**restent sous MPL-2.0**, et l'attribution doit être **conservée** — renommer ou
-modifier ne supprime pas cette obligation. Voir https://www.mozilla.org/MPL/2.0/.
+⚠️ The MPL is a **per-file** copyleft: these files (and their modifications)
+**remain under MPL-2.0**, and the attribution must be **kept** — renaming or
+modifying does not remove this obligation. See https://www.mozilla.org/MPL/2.0/.
 
-Fichiers dérivés :
+Derived files:
 - `vignemale/parser/meta/v1/meta.proto`
 - `vignemale/parser/schema/v1/schema.proto`
 - `vignemale/runtime/v1/runtime.proto`
 - `vignemale/runtime/v1/infra.proto`
 - `vignemale/runtime/v1/secretdata.proto`
 
-> C'est **ton** projet (branding `vignemale` partout), mais tant que ces schémas —
-> et le code qu'on portera depuis `runtimes/core` — **dérivent d'Encore**, cette
-> attribution reste obligatoire (sinon = violation de licence, à éviter absolument
-> pour un projet open-source). Pour t'en affranchir totalement un jour, il faudrait
-> **réécrire** ces parties from scratch.
+> This is **your** project (`vignemale` branding everywhere), but as long as these
+> schemas — and the code we'll port from `runtimes/core` — **derive from Encore**,
+> this attribution stays mandatory (otherwise = license violation, absolutely to
+> be avoided for an open-source project). To free yourself from it entirely one
+> day, you would have to **rewrite** these parts from scratch.
+</content>

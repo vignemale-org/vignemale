@@ -1,7 +1,7 @@
-"""Conversations : modèles déclarés, tables automatiques, zéro SQL.
+"""Conversations: declared models, automatic tables, zero SQL.
 
-Le contenu des échanges est une donnée personnelle (`PII`), rattachée à la
-personne via `__subject__` : le droit à l'oubli traverse les services.
+The content of the exchanges is personal data (`PII`), linked to the
+person via `__subject__`: the right to be forgotten crosses services.
 """
 
 from typing import Optional
@@ -18,19 +18,19 @@ class Conversation(Table):
 
     id: Optional[int] = None
     user_id: int
-    title: str = PII(purpose="contenu des échanges")
+    title: str = PII(purpose="content of the exchanges")
 
 
 class Message(Table):
     __database__ = "chat"
     __subject__ = "user_id"
-    __on_forget__ = "anonymize"  # la ligne reste (stats), le contenu est caviardé
+    __on_forget__ = "anonymize"  # the row stays (stats), the content is redacted
 
     id: Optional[int] = None
     conversation_id: int
     user_id: int
     role: str
-    content: str = PII(purpose="contenu des échanges")
+    content: str = PII(purpose="content of the exchanges")
 
 
 class NewConversation(BaseModel):
@@ -38,19 +38,19 @@ class NewConversation(BaseModel):
 
 
 def owned_conversation(conversation_id: int, user_id) -> Conversation:
-    """La conversation, si elle appartient bien à l'utilisateur."""
+    """The conversation, if it truly belongs to the user."""
     conv = Conversation.get(conversation_id)
     if conv is None:
-        raise APIError.not_found(f"conversation {conversation_id} introuvable")
+        raise APIError.not_found(f"conversation {conversation_id} not found")
     if conv.user_id != user_id:
-        raise APIError.permission_denied("cette conversation ne t'appartient pas")
+        raise APIError.permission_denied("this conversation does not belong to you")
     return conv
 
 
 @api(method="POST", path="/conversations", auth=True)
 def create_conversation(body: NewConversation, auth) -> dict:
     conv = Conversation.create(user_id=auth["user_id"], title=body.title)
-    log.info("conversation créée", conversation_id=conv.id, user_id=auth["user_id"])
+    log.info("conversation created", conversation_id=conv.id, user_id=auth["user_id"])
     return {"id": conv.id, "title": conv.title}
 
 

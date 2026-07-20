@@ -1,4 +1,4 @@
-"""Prod-readiness : timeout, body limit, arrêt gracieux avec drain."""
+"""Prod-readiness: timeout, body limit, graceful shutdown with drain."""
 
 import json
 import os
@@ -23,34 +23,34 @@ def hello():
     srv.stop()
 
 
-def test_timeout_par_endpoint(hello):
-    """@api(timeout=0.5) sur un handler de 3 s → 504 deadline_exceeded."""
+def test_timeout_per_endpoint(hello):
+    """@api(timeout=0.5) on a 3 s handler → 504 deadline_exceeded."""
     t0 = time.time()
     status, body = request(hello, "/slow")
     assert status == 504
     assert body["code"] == "deadline_exceeded"
-    assert time.time() - t0 < 2, "la réponse doit partir au timeout, pas à la fin du handler"
+    assert time.time() - t0 < 2, "the response must be sent at the timeout, not at the end of the handler"
 
 
-def test_body_limit_par_endpoint(hello):
-    """@api(body_limit=1024) → un body de 4 Kio est rejeté en 413."""
+def test_body_limit_per_endpoint(hello):
+    """@api(body_limit=1024) → a 4 KiB body is rejected with 413."""
     req = urllib.request.Request(f"http://{hello}/small", data=b"x" * 4096)
     try:
         urllib.request.urlopen(req, timeout=5)
-        assert False, "un body trop gros doit être rejeté"
+        assert False, "a too-large body must be rejected"
     except urllib.error.HTTPError as e:
         assert e.code == 413
         assert json.loads(e.read())["code"] == "resource_exhausted"
-    # sous la limite : OK
+    # under the limit: OK
     req = urllib.request.Request(f"http://{hello}/small", data=b'{"a":1}')
     with urllib.request.urlopen(req, timeout=5) as r:
         assert r.status == 200
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="signaux POSIX")
-def test_arret_gracieux_drain():
-    """SIGTERM pendant une requête en vol : elle TERMINE (200), puis le
-    process sort proprement — pas de requête coupée au redéploiement."""
+def test_graceful_shutdown_drain():
+    """SIGTERM during an in-flight request: it COMPLETES (200), then the
+    process exits cleanly — no request cut off on redeploy."""
     addr = f"127.0.0.1:{free_port()}"
     env = dict(os.environ, VIGNEMALE_ADDR=addr)
     srv = Server(
@@ -64,24 +64,24 @@ def test_arret_gracieux_drain():
 
     t = threading.Thread(target=long_call)
     t.start()
-    time.sleep(0.4)  # la requête est en vol
+    time.sleep(0.4)  # the request is in flight
     srv.proc.send_signal(signal.SIGTERM)
     t.join(timeout=10)
 
-    assert result.get("body") == {"done": True}, "la requête en vol doit terminer"
+    assert result.get("body") == {"done": True}, "the in-flight request must complete"
     assert srv.proc.wait(timeout=10) == 0
-    assert "arrêté" in srv.proc.stdout.read().decode()
+    assert "stopped" in srv.proc.stdout.read().decode()
 
-    # après l'arrêt : plus aucune connexion acceptée
+    # after shutdown: no more connections accepted
     with pytest.raises(urllib.error.URLError):
         urllib.request.urlopen(f"http://{addr}/hello", timeout=2)
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="signaux POSIX")
-def test_keep_accepting_fenetre_load_balancer():
-    """Séquence shutdown façon Encore : sur signal, healthz passe 503 mais le
-    serveur CONTINUE d'accepter pendant VIGNEMALE_SHUTDOWN_KEEP_ACCEPTING — le
-    temps que le load balancer voie le 503 et cesse de router."""
+def test_keep_accepting_load_balancer_window():
+    """Encore-style shutdown sequence: on signal, healthz turns 503 but the
+    server KEEPS accepting for VIGNEMALE_SHUTDOWN_KEEP_ACCEPTING — long enough
+    for the load balancer to see the 503 and stop routing."""
     addr = f"127.0.0.1:{free_port()}"
     env = dict(os.environ, VIGNEMALE_ADDR=addr, VIGNEMALE_SHUTDOWN_KEEP_ACCEPTING="3")
     srv = Server(
@@ -99,7 +99,7 @@ def test_keep_accepting_fenetre_load_balancer():
 
     assert code("/__vignemale/healthz") == 200
     srv.proc.send_signal(signal.SIGINT)
-    time.sleep(0.8)  # dans la fenêtre keep_accepting (3 s)
-    assert code("/__vignemale/healthz") == 503  # le LB voit l'arrêt imminent
-    assert code("/hello") == 200                 # mais on accepte toujours
-    assert srv.proc.wait(timeout=10) == 0        # puis arrêt propre
+    time.sleep(0.8)  # within the keep_accepting window (3 s)
+    assert code("/__vignemale/healthz") == 503  # the LB sees the imminent shutdown
+    assert code("/hello") == 200                 # but we still accept
+    assert srv.proc.wait(timeout=10) == 0        # then clean shutdown

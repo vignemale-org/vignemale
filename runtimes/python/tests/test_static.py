@@ -1,4 +1,4 @@
-"""static_files : front servi par le core Rust (SPA fallback) + API à côté."""
+"""static_files: front served by the Rust core (SPA fallback) + API alongside."""
 
 import json
 import os
@@ -27,13 +27,13 @@ def get(addr, path):
         return r.status, r.headers.get("content-type", ""), r.read().decode()
 
 
-def test_index_servi_a_la_racine(app):
+def test_index_served_at_root(app):
     status, ctype, body = get(app, "/")
     assert status == 200 and ctype.startswith("text/html")
-    assert "core Rust" in body
+    assert "Rust core" in body
 
 
-def test_assets_avec_bon_content_type(app):
+def test_assets_with_correct_content_type(app):
     status, ctype, body = get(app, "/app.js")
     assert status == 200 and "javascript" in ctype
     assert "fetch(" in body
@@ -42,18 +42,18 @@ def test_assets_avec_bon_content_type(app):
 
 
 def test_fallback_spa(app):
-    """Route inconnue → index.html (routing côté client, façon Next.js export)."""
-    status, ctype, body = get(app, "/une/route/de/spa")
+    """Unknown route → index.html (client-side routing, Next.js-export style)."""
+    status, ctype, body = get(app, "/some/spa/route")
     assert status == 200 and ctype.startswith("text/html")
-    assert "core Rust" in body
+    assert "Rust core" in body
 
 
-def test_api_coexiste_avec_le_front(app):
+def test_api_coexists_with_the_front(app):
     status, ctype, body = get(app, "/api/hello?name=Jacques")
     assert status == 200 and "json" in ctype
-    assert json.loads(body) == {"message": "Bonjour Jacques !"}
+    assert json.loads(body) == {"message": "Hello Jacques!"}
 
 
-def test_healthz_prioritaire_sur_le_fallback(app):
+def test_healthz_takes_priority_over_the_fallback(app):
     status, _, body = get(app, "/__vignemale/healthz")
     assert status == 200 and json.loads(body)["code"] == "ok"

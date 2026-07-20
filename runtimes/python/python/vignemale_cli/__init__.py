@@ -1,7 +1,7 @@
-"""CLI Vignemale — l'outillage développeur, séparé du runtime.
+"""Vignemale CLI — the developer tooling, separate from the runtime.
 
-Composants : `cli` (commandes run/check/gen/rgpd), `collect` (le parser
-statique : code Python → meta.proto), `devinfra` (provisioning local
-docker), `gen` (clients typés). Le runtime (`vignemale`) reste le seul
-package nécessaire en production.
+Components: `cli` (run/check/gen/gdpr commands), `collect` (the static
+parser: Python code → meta.proto), `devinfra` (local docker
+provisioning), `gen` (typed clients). The runtime (`vignemale`) stays the only
+package needed in production.
 """

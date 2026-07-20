@@ -1,4 +1,4 @@
-"""Service `kb` — knowledge bases, documents indexés (pgvector), permissions."""
+"""Service `kb` — knowledge bases, indexed documents (pgvector), permissions."""
 
 from vignemale import Service
 

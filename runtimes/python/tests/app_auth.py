@@ -1,4 +1,4 @@
-"""Mini-app pour les tests d'authentification."""
+"""Mini-app for the authentication tests."""
 
 from vignemale.api import api, auth_handler, serve
 
@@ -21,13 +21,13 @@ def private(auth):
 
 
 @api(method="GET", path="/private-opaque", auth=True)
-def private_opaque():  # ne déclare pas `auth` : protégé quand même
+def private_opaque():  # does not declare `auth`: protected anyway
     return {"ok": True}
 
 
 @api(method="GET", path="/private-stream", auth=True, stream=True)
 def private_stream(stream, auth):
-    stream.write(f"bienvenue {auth['user_id']}")
+    stream.write(f"welcome {auth['user_id']}")
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
-// Transactions sans lifetime — miroir du transaction.rs d'Encore (« where the
-// transaction doesn't have a lifetime, so it can be shared via napi-rs ») :
-// chez nous, pour traverser le binding PyO3. Un registre id → connexion du
-// pool ; BEGIN à l'ouverture, COMMIT/ROLLBACK terminal rend la connexion.
+// Transactions without a lifetime — mirror of Encore's transaction.rs ("where the
+// transaction doesn't have a lifetime, so it can be shared via napi-rs"):
+// in our case, to cross the PyO3 binding. A registry id -> pool connection;
+// BEGIN on open, a terminal COMMIT/ROLLBACK returns the connection.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -25,10 +25,10 @@ fn take_tx(id: u64) -> anyhow::Result<deadpool_postgres::Object> {
         .lock()
         .expect("txs lock")
         .remove(&id)
-        .ok_or_else(|| anyhow::anyhow!("transaction {id} inconnue ou déjà terminée"))
+        .ok_or_else(|| anyhow::anyhow!("transaction {id} unknown or already finished"))
 }
 
-/// Ouvre une transaction (BEGIN) et renvoie son identifiant.
+/// Opens a transaction (BEGIN) and returns its identifier.
 pub async fn tx_begin(pool: &Pool) -> anyhow::Result<u64> {
     let started = std::time::Instant::now();
     let result = async {
@@ -51,8 +51,8 @@ where
 {
     let conn = take_tx(id)?;
     let (conn, result) = f(conn).await;
-    // la connexion retourne au registre, même après une erreur SQL : c'est
-    // le rollback (du SDK) qui termine la transaction proprement
+    // the connection goes back to the registry, even after a SQL error: it is
+    // the rollback (from the SDK) that finishes the transaction cleanly
     txs().lock().expect("txs lock").insert(id, conn);
     result
 }
@@ -95,7 +95,7 @@ async fn tx_finish(id: u64, terminal: &str) -> anyhow::Result<()> {
         .await
         .map_err(|e| anyhow::anyhow!("{e:#}"));
     trace_query(terminal, started, &result);
-    // conn retourne au pool ici (drop) — la transaction est terminée
+    // conn returns to the pool here (drop) — the transaction is finished
     result
 }
 

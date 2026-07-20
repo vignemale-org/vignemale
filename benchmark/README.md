@@ -1,71 +1,72 @@
 # Benchmark — Vignemale vs FastAPI
 
-Vignemale exécute le cycle HTTP, le routing et la (dé)sérialisation **en Rust
-(axum/tokio, multi-thread)** ; le handler Python ne tient le GIL que pour la
-logique métier, et le relâche pendant l'I/O. FastAPI exécute tout en Python sur
-la boucle asyncio. À configuration égale, l'écart est net.
+Vignemale runs the HTTP cycle, the routing and the (de)serialization **in Rust
+(axum/tokio, multi-threaded)**; the Python handler only holds the GIL for the
+business logic, and releases it during I/O. FastAPI runs everything in Python on
+the asyncio loop. At equal configuration, the gap is clear.
 
-## Méthodologie (honnête)
+## Methodology (honest)
 
-- Outil : [`oha`](https://github.com/hatoo/oha), 50 connexions concurrentes, 10 s.
-- Apps **équivalentes** : `app_vignemale.py` et `app_fastapi.py` exposent les
-  trois mêmes endpoints (JSON simple, paramètre de chemin, body validé Pydantic).
-- Même machine, localhost (le réseau n'est pas le facteur mesuré).
-- `./bench.sh` lance les deux serveurs et joue les trois scénarios.
-  Variables : `CONN`, `DUR`, `WORKERS` (workers uvicorn).
+- Tool: [`oha`](https://github.com/hatoo/oha), 50 concurrent connections, 10 s.
+- **Equivalent** apps: `app_vignemale.py` and `app_fastapi.py` expose the same
+  three endpoints (simple JSON, path parameter, Pydantic-validated body).
+- Same machine, localhost (the network is not the factor being measured).
+- `./bench.sh` starts both servers and runs the three scenarios.
+  Variables: `CONN`, `DUR`, `WORKERS` (uvicorn workers).
 
-> Reproduire : `cd .. && source runtimes/python/.venv/bin/activate &&
+> Reproduce: `cd .. && source runtimes/python/.venv/bin/activate &&
 > CONN=50 DUR=10s WORKERS=1 ./benchmark/bench.sh`
 
-## Résultat — à armes égales (1 process chacun)
+## Result — on equal footing (1 process each)
 
-C'est la comparaison juste : un process Vignemale vs un worker uvicorn.
+This is the fair comparison: one Vignemale process vs one uvicorn worker.
 
-| Scénario | Vignemale | FastAPI | Écart |
+| Scenario | Vignemale | FastAPI | Gap |
 |---|---|---|---|
-| `GET /hello` (JSON) | **42 570** req/s · p99 4.5 ms | 17 239 req/s · p99 8.0 ms | **2.5×** |
-| `GET /items/42` (param) | **38 458** req/s · p99 5.2 ms | 13 581 req/s · p99 12.6 ms | **2.8×** |
-| `POST /orders` (Pydantic) | **29 254** req/s · p99 7.1 ms | 13 940 req/s · p99 9.0 ms | **2.1×** |
+| `GET /hello` (JSON) | **42,570** req/s · p99 4.5 ms | 17,239 req/s · p99 8.0 ms | **2.5×** |
+| `GET /items/42` (param) | **38,458** req/s · p99 5.2 ms | 13,581 req/s · p99 12.6 ms | **2.8×** |
+| `POST /orders` (Pydantic) | **29,254** req/s · p99 7.1 ms | 13,940 req/s · p99 9.0 ms | **2.1×** |
 
-## Résultat — Vignemale 1 process vs uvicorn 4 workers
+## Result — Vignemale 1 process vs uvicorn 4 workers
 
-Même avec **4× plus de process côté FastAPI**, Vignemale tient ou dépasse sur
-les lectures (son cycle HTTP est en Rust, pas sur la boucle asyncio) :
+Even with **4× more processes on the FastAPI side**, Vignemale holds or exceeds on
+the reads (its HTTP cycle is in Rust, not on the asyncio loop):
 
-| Scénario | Vignemale (1 proc) | FastAPI (4 workers) |
+| Scenario | Vignemale (1 proc) | FastAPI (4 workers) |
 |---|---|---|
-| `GET /hello` | **42 980** req/s · p99 4.5 ms | 38 871 req/s · p99 6.1 ms |
-| `GET /items/42` | **39 807** req/s · p99 4.9 ms | 35 461 req/s · p99 4.3 ms |
-| `POST /orders` (Pydantic) | 29 325 req/s · p99 7.8 ms | **34 682** req/s · p99 3.3 ms |
+| `GET /hello` | **42,980** req/s · p99 4.5 ms | 38,871 req/s · p99 6.1 ms |
+| `GET /items/42` | **39,807** req/s · p99 4.9 ms | 35,461 req/s · p99 4.3 ms |
+| `POST /orders` (Pydantic) | 29,325 req/s · p99 7.8 ms | **34,682** req/s · p99 3.3 ms |
 
-## Résultat — 4 workers chacun (`VIGNEMALE_WORKERS=4` vs `uvicorn --workers 4`)
+## Result — 4 workers each (`VIGNEMALE_WORKERS=4` vs `uvicorn --workers 4`)
 
-Le multi-process efface le déficit du POST validé (le GIL ne sérialise plus) :
-Vignemale passe **devant sur les trois scénarios**.
+Multi-process erases the validated-POST deficit (the GIL no longer serializes):
+Vignemale moves **ahead on all three scenarios**.
 
-| Scénario | Vignemale (4w) | FastAPI (4w) |
+| Scenario | Vignemale (4w) | FastAPI (4w) |
 |---|---|---|
-| `GET /hello` | **39 102** req/s | 36 067 req/s |
-| `GET /items/42` | **45 171** req/s | 38 808 req/s |
-| `POST /orders` (Pydantic) | **40 794** req/s | 33 139 req/s |
+| `GET /hello` | **39,102** req/s | 36,067 req/s |
+| `GET /items/42` | **45,171** req/s | 38,808 req/s |
+| `POST /orders` (Pydantic) | **40,794** req/s | 33,139 req/s |
 
-(Sur un laptop, oha + 8 serveurs + Postgres se partagent les cœurs, donc 4
-workers ne quadruplent pas le débit — l'important est le classement à config
-identique. Sur une machine de prod dédiée, l'écart s'élargit.)
+(On a laptop, oha + 8 servers + Postgres share the cores, so 4 workers don't
+quadruple the throughput — what matters is the ranking at identical config. On a
+dedicated prod machine, the gap widens.)
 
-## Lecture honnête des chiffres
+## An honest reading of the numbers
 
-- **Vignemale gagne franchement sur les lectures** : routing et sérialisation
-  en Rust, GIL relâché pendant l'I/O → un seul process sature mieux qu'un worker
-  Python, et rivalise avec 4 workers uvicorn.
-- **Sur le POST validé, FastAPI 4 workers repasse devant** : le travail est
-  surtout du CPU Python (parse JSON + validation Pydantic + sérialisation), qui
-  tient le GIL ; 4 process battent 1 process malgré la traversée FFI. À 1 worker,
-  Vignemale reprend l'avantage (2.1×).
-- **Ce qu'on ne prétend PAS** : égaler Encore.ts (121k req/s) — leur handler est
-  du JS, pas du Python sous GIL ; et la validation reste en Pydantic (Python),
-  là où Encore valide en Rust. Notre angle est « le backend Python le plus
-  rapide à configuration égale », pas « le plus rapide tout court ».
-- **Résolu** : le mode multi-process `VIGNEMALE_WORKERS=N` (fork + SO_REUSEPORT,
-  chaque worker garde son cycle HTTP Rust et son interpréteur) met Vignemale
-  devant sur tous les scénarios à config identique — cf. tableau 4 workers.
+- **Vignemale wins clearly on the reads**: routing and serialization in Rust, GIL
+  released during I/O → a single process saturates better than one Python worker,
+  and rivals 4 uvicorn workers.
+- **On the validated POST, FastAPI 4 workers takes the lead back**: the work is
+  mostly Python CPU (JSON parse + Pydantic validation + serialization), which
+  holds the GIL; 4 processes beat 1 process despite the FFI crossing. At 1 worker,
+  Vignemale takes the advantage back (2.1×).
+- **What we do NOT claim**: matching Encore.ts (121k req/s) — their handler is JS,
+  not Python under the GIL; and the validation stays in Pydantic (Python), where
+  Encore validates in Rust. Our angle is "the fastest Python backend at equal
+  configuration", not "the fastest, period".
+- **Resolved**: the multi-process mode `VIGNEMALE_WORKERS=N` (fork +
+  SO_REUSEPORT, each worker keeps its Rust HTTP cycle and its interpreter) puts
+  Vignemale ahead on all scenarios at identical config — see the 4-workers table.
+</content>

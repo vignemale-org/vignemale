@@ -1,6 +1,6 @@
-// Détient les endpoints + leurs handlers (classiques ou streaming) et
-// l'éventuel auth handler, et démarre le serveur. (Version focalisée du
-// `manager.rs` d'Encore.)
+// Holds the endpoints + their handlers (classic or streaming) and
+// the optional auth handler, and starts the server. (Focused version of
+// Encore's `manager.rs`.)
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -23,23 +23,23 @@ impl Manager {
         }
     }
 
-    /// Enregistre un endpoint et son handler.
+    /// Registers an endpoint and its handler.
     pub fn register(&mut self, endpoint: Endpoint, handler: HandlerKind) {
         self.endpoints.push((endpoint, handler));
     }
 
-    /// Déclare l'auth handler de l'app (appelé pour les endpoints protégés).
+    /// Declares the app's auth handler (called for protected endpoints).
     pub fn set_auth_handler(&mut self, auth: Arc<dyn AuthHandler>) {
         self.auth = Some(auth);
     }
 
-    /// Déclare un dossier de fichiers statiques servi par le core.
+    /// Declares a static files directory served by the core.
     pub fn add_static(&mut self, route: StaticRoute) {
         self.statics.push(route);
     }
 
-    /// Démarre le serveur. S'arrête gracieusement (drain des requêtes en vol)
-    /// quand `shutdown` passe à `true` ; `shutting_down` pilote le healthz (503).
+    /// Starts the server. Shuts down gracefully (draining in-flight requests)
+    /// when `shutdown` flips to `true`; `shutting_down` drives the healthz (503).
     #[allow(clippy::too_many_arguments)]
     pub async fn serve(
         self,

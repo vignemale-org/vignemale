@@ -1,4 +1,4 @@
-"""Service `orders` seul — appelle `catalog` via call() (HTTP signé en test)."""
+"""Standalone `orders` service — calls `catalog` via call() (signed HTTP in tests)."""
 
 from pydantic import BaseModel
 

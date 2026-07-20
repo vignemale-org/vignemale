@@ -1,4 +1,4 @@
-"""vignemale.model : tables Pydantic, CRUD typé, migration additive."""
+"""vignemale.model: Pydantic tables, typed CRUD, additive migration."""
 
 import os
 from typing import Optional
@@ -10,7 +10,7 @@ from vignemale.datamodel import Table, _tables, sql
 
 PG = os.environ.get("VIGNEMALE_TEST_PG")
 needs_pg = pytest.mark.skipif(
-    not PG, reason="pose VIGNEMALE_TEST_PG (DSN Postgres) pour l'activer"
+    not PG, reason="set VIGNEMALE_TEST_PG (Postgres DSN) to enable"
 )
 
 
@@ -41,41 +41,41 @@ def test_table_registered():
 
 @needs_pg
 def test_crud_typed_roundtrip():
-    g = Gadget.create(name="boussole", tags={"alt": 3298}, score=9.5)
+    g = Gadget.create(name="compass", tags={"alt": 3298}, score=9.5)
     assert isinstance(g, Gadget) and isinstance(g.id, int)
 
     back = Gadget.get(g.id)
-    assert back.name == "boussole"
+    assert back.name == "compass"
     assert back.tags == {"alt": 3298}
     assert back.active is True
     assert back.score == 9.5
 
-    back.name = "piolet"
+    back.name = "ice-axe"
     back.score = None
     back.save()
-    assert Gadget.get(g.id).name == "piolet"
+    assert Gadget.get(g.id).name == "ice-axe"
     assert Gadget.get(g.id).score is None
 
     assert Gadget.count() == 1
-    assert Gadget.find_one(name="piolet").id == g.id
-    assert Gadget.find_one(name="inexistant") is None
+    assert Gadget.find_one(name="ice-axe").id == g.id
+    assert Gadget.find_one(name="nonexistent") is None
 
     back.delete()
     assert Gadget.get(g.id) is None
 
 
 @needs_pg
-def test_validation_pydantic_au_create():
-    with pytest.raises(Exception):  # name requis
+def test_validation_pydantic_on_create():
+    with pytest.raises(Exception):  # name required
         Gadget.create(tags={})
 
 
 @needs_pg
-def test_requete_sql_custom_attachee_a_la_table():
-    """`sql(...)` attache une requête custom à la table — typée au retour,
-    ou brute (raw=True) pour les agrégats. Le CRUD standard reste au core."""
+def test_custom_sql_query_attached_to_the_table():
+    """`sql(...)` attaches a custom query to the table — typed on return,
+    or raw (raw=True) for aggregates. Standard CRUD stays in the core."""
 
-    class Outil(Table):
+    class Tool(Table):
         __database__ = "pytest_model"
         __tablename__ = "vgm_gadgets"
 
@@ -85,30 +85,30 @@ def test_requete_sql_custom_attachee_a_la_table():
         active: bool = True
         score: Optional[float] = None
 
-        meilleurs = sql(
+        best = sql(
             "SELECT * FROM vgm_gadgets WHERE score >= $1 ORDER BY score DESC"
         )
         stats = sql(
             "SELECT count(*) AS n, max(score) AS top FROM vgm_gadgets", raw=True
         )
 
-    Outil.create(name="piolet", score=5.0)
-    Outil.create(name="corde", score=9.0)
-    Outil.create(name="gourde", score=1.0)
+    Tool.create(name="ice-axe", score=5.0)
+    Tool.create(name="rope", score=9.0)
+    Tool.create(name="flask", score=1.0)
 
-    tops = Outil.meilleurs(4.0)
-    assert [t.name for t in tops] == ["corde", "piolet"]
-    assert isinstance(tops[0], Outil)  # lignes re-typées dans le modèle
+    tops = Tool.best(4.0)
+    assert [t.name for t in tops] == ["rope", "ice-axe"]
+    assert isinstance(tops[0], Tool)  # rows re-typed into the model
 
-    (s,) = Outil.stats()
+    (s,) = Tool.stats()
     assert s["n"] == 3 and s["top"] == 9.0
 
 
 @needs_pg
-def test_sql_parametres_nommes_types():
-    """`sql(..., nom=type)` : placeholders $nom, validation/coercion Pydantic."""
+def test_sql_named_typed_parameters():
+    """`sql(..., name=type)`: $name placeholders, Pydantic validation/coercion."""
 
-    class Outil2(Table):
+    class Tool2(Table):
         __database__ = "pytest_model"
         __tablename__ = "vgm_gadgets"
 
@@ -118,65 +118,65 @@ def test_sql_parametres_nommes_types():
         active: bool = True
         score: Optional[float] = None
 
-        entre = sql(
+        between = sql(
             "SELECT * FROM vgm_gadgets WHERE score >= $min AND score <= $max "
             "ORDER BY score",
             min=float,
             max=float,
         )
-        comme = sql(  # $nom répété → même placeholder
+        like = sql(  # repeated $name → same placeholder
             "SELECT * FROM vgm_gadgets WHERE name = $n OR name = upper($n)", n=str
         )
 
-    Outil2.create(name="a", score=2.0)
-    Outil2.create(name="b", score=5.0)
-    Outil2.create(name="c", score=9.0)
+    Tool2.create(name="a", score=2.0)
+    Tool2.create(name="b", score=5.0)
+    Tool2.create(name="c", score=9.0)
 
-    assert [o.name for o in Outil2.entre(min=3, max=8)] == ["b"]  # int → float coercé
-    assert [o.name for o in Outil2.entre("1", "6")] == ["a", "b"]  # strings coercées
-    assert [o.name for o in Outil2.comme(n="a")] == ["a"]
+    assert [o.name for o in Tool2.between(min=3, max=8)] == ["b"]  # int → float coerced
+    assert [o.name for o in Tool2.between("1", "6")] == ["a", "b"]  # strings coerced
+    assert [o.name for o in Tool2.like(n="a")] == ["a"]
 
-    with pytest.raises(TypeError, match="manquant"):
-        Outil2.entre(min=1)
-    with pytest.raises(TypeError, match="inconnu"):
-        Outil2.entre(min=1, max=2, oops=3)
-    with pytest.raises(Exception):  # validation pydantic : pas un float
-        Outil2.entre(min="pas un nombre", max=2)
+    with pytest.raises(TypeError, match="missing"):
+        Tool2.between(min=1)
+    with pytest.raises(TypeError, match="unknown"):
+        Tool2.between(min=1, max=2, oops=3)
+    with pytest.raises(Exception):  # pydantic validation: not a float
+        Tool2.between(min="not a number", max=2)
 
 
-def test_sql_declaration_incoherente_refusee():
-    """Fail fast à la déclaration : paramètre non déclaré ou jamais utilisé."""
-    with pytest.raises(TypeError, match="non déclaré"):
-        sql("SELECT * FROM x WHERE a = $a AND b = $b", a=str)  # $b manque
+def test_sql_inconsistent_declaration_rejected():
+    """Fail fast at declaration: parameter not declared or never used."""
+    with pytest.raises(TypeError, match="not declared"):
+        sql("SELECT * FROM x WHERE a = $a AND b = $b", a=str)  # $b missing
     with pytest.raises(TypeError, match="absent"):
-        sql("SELECT * FROM x WHERE a = $a", a=str, b=int)  # b jamais utilisé
+        sql("SELECT * FROM x WHERE a = $a", a=str, b=int)  # b never used
 
 
 @needs_pg
-def test_injection_impossible_par_nom_de_colonne():
-    """La whitelist des colonnes vit dans le CORE : un nom inconnu est rejeté."""
+def test_injection_impossible_by_column_name():
+    """The column whitelist lives in the CORE: an unknown name is rejected."""
     from vignemale import SQLError
 
-    with pytest.raises(SQLError, match="colonne inconnue"):
-        Gadget.find(**{"nexiste_pas": 1})
+    with pytest.raises(SQLError, match="unknown column"):
+        Gadget.find(**{"does_not_exist": 1})
 
 
 @needs_pg
 def test_migration_additive():
-    Gadget.create(name="v1")  # crée la table version 1
+    Gadget.create(name="v1")  # creates table version 1
 
     class GadgetV2(Table):
         __database__ = "pytest_model"
-        __tablename__ = "vgm_gadgets"  # même table, colonne en plus
+        __tablename__ = "vgm_gadgets"  # same table, one extra column
 
         id: Optional[int] = None
         name: str
         tags: dict = {}
         active: bool = True
         score: Optional[float] = None
-        color: Optional[str] = None  # ← nouvelle colonne
+        color: Optional[str] = None  # ← new column
 
-    g = GadgetV2.create(name="v2", color="rouge")
-    assert GadgetV2.get(g.id).color == "rouge"
-    # les anciennes lignes ont color NULL
+    g = GadgetV2.create(name="v2", color="red")
+    assert GadgetV2.get(g.id).color == "red"
+    # old rows have color NULL
     assert GadgetV2.find_one(name="v1").color is None

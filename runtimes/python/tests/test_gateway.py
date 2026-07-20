@@ -1,5 +1,5 @@
-"""Gateway : entrée unique devant plusieurs services backend.
-Auth jouée à l'edge, routage par préfixe, forward signé, identité propagée."""
+"""Gateway: single entry point in front of several backend services.
+Auth run at the edge, prefix routing, signed forwarding, propagated identity."""
 
 import json
 import os
@@ -51,26 +51,26 @@ def stack():
     gw.stop(); ordp.stop(); cat.stop()
 
 
-def test_route_vers_catalog_avec_auth_edge(stack):
+def test_route_to_catalog_with_edge_auth(stack):
     status, body = get(stack, "/items/7", token="sesame")
     assert status == 200
     assert body["name"] == "widget"
-    assert body["seen_user"] == "u-42"  # identité propagée à travers la gateway
+    assert body["seen_user"] == "u-42"  # identity propagated through the gateway
 
 
-def test_auth_jouee_a_l_edge_401_sans_token(stack):
-    # le 401 vient de la GATEWAY — la requête n'atteint jamais le backend
+def test_auth_run_at_edge_401_without_token(stack):
+    # the 401 comes from the GATEWAY — the request never reaches the backend
     status, body = get(stack, "/items/7")
     assert status == 401 and body["code"] == "unauthenticated"
 
 
-def test_chemin_inconnu_404(stack):
-    status, body = get(stack, "/zzz/rien")
+def test_unknown_path_404(stack):
+    status, body = get(stack, "/zzz/nothing")
     assert status == 404 and body["code"] == "not_found"
 
 
-def test_route_vers_orders_qui_appelle_catalog(stack):
-    # gateway → orders → (call interne signé) → catalog : la chaîne complète
+def test_route_to_orders_that_calls_catalog(stack):
+    # gateway → orders → (signed internal call) → catalog: the full chain
     status, body = get(stack, "/orders", token="sesame", method="POST", data={"item_id": 7})
     assert status == 200
     assert body["created"] is True
@@ -78,7 +78,7 @@ def test_route_vers_orders_qui_appelle_catalog(stack):
     assert body["by"] == "u-42"
 
 
-def test_request_id_pose_par_la_gateway(stack):
+def test_request_id_set_by_the_gateway(stack):
     req = urllib.request.Request(f"http://{stack}/items/1",
                                  headers={"Authorization": "Bearer sesame"})
     with urllib.request.urlopen(req, timeout=10) as r:

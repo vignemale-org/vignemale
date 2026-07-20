@@ -1,7 +1,7 @@
-// Serveur HTTP focalisé (axum) : handlers classiques ET streaming (SSE).
+// Focused HTTP server (axum): both classic AND streaming (SSE) handlers.
 //
-// Les handlers sont appelés hors de l'exécuteur async (`spawn_blocking`) car le
-// code app (Python) est bloquant et tient le GIL.
+// Handlers are called outside the async executor (`spawn_blocking`) because the
+// app code (Python) is blocking and holds the GIL.
 
 use std::convert::Infallible;
 use std::net::SocketAddr;
@@ -23,89 +23,89 @@ use tokio_stream::StreamExt;
 use super::error::error_json;
 use super::Endpoint;
 
-/// Requête transmise à un handler.
+/// Request passed to a handler.
 pub struct Request {
     pub params: Vec<(String, String)>,
-    /// Paramètres de query string (`?q=midi&limit=3`), décodés.
+    /// Query-string parameters (`?q=noon&limit=3`), decoded.
     pub query: Vec<(String, String)>,
-    /// En-têtes HTTP (noms en minuscules ; valeurs non-UTF-8 ignorées).
+    /// HTTP headers (lowercase names; non-UTF-8 values ignored).
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
-    /// Identifiant unique de la requête — renvoyé dans `x-vignemale-request-id`
-    /// et présent dans chaque ligne de log qui la concerne.
+    /// Unique identifier of the request — returned in `x-vignemale-request-id`
+    /// and present in every log line that concerns it.
     pub request_id: String,
-    /// Données d'auth (JSON) si l'endpoint est protégé et le token validé.
+    /// Auth data (JSON) if the endpoint is protected and the token was validated.
     pub auth_data: Option<String>,
 }
 
-/// Réponse d'un handler classique.
+/// Response from a classic handler.
 pub struct Response {
     pub status: u16,
     pub body: Vec<u8>,
 }
 
-/// Handler classique (requête → réponse).
+/// Classic handler (request → response).
 pub trait Handler: Send + Sync + 'static {
     fn call(&self, req: Request) -> Response;
 }
 
-/// Puits d'écriture d'un handler streaming : chaque `write` devient un événement
-/// SSE `data:`. À appeler hors contexte async (le handler tourne sur un thread
-/// bloquant).
+/// Write sink of a streaming handler: each `write` becomes an SSE `data:`
+/// event. To be called outside an async context (the handler runs on a blocking
+/// thread).
 #[derive(Clone)]
 pub struct StreamSink {
     tx: tokio::sync::mpsc::Sender<String>,
 }
 
 impl StreamSink {
-    /// Pousse un fragment. Renvoie `false` si le flux est fermé (client parti).
+    /// Pushes a chunk. Returns `false` if the stream is closed (client gone).
     pub fn write(&self, chunk: String) -> bool {
         self.tx.blocking_send(chunk).is_ok()
     }
 }
 
-/// Handler streaming : pousse des fragments via `sink` au fil de l'eau.
+/// Streaming handler: pushes chunks via `sink` as they come.
 pub trait StreamHandler: Send + Sync + 'static {
     fn call(&self, req: Request, sink: StreamSink);
 }
 
-/// Un handler, classique ou streaming.
+/// A handler, classic or streaming.
 pub enum HandlerKind {
     Unary(Arc<dyn Handler>),
     Stream(Arc<dyn StreamHandler>),
 }
 
-/// Fichiers statiques servis par le CORE (miroir du static_assets.rs
-/// d'Encore) : zéro code app exécuté — un front (Next.js `output: 'export'`,
-/// Vite…) est servi directement par le runtime Rust.
+/// Static files served by the CORE (mirror of Encore's static_assets.rs):
+/// zero app code executed — a frontend (Next.js `output: 'export'`,
+/// Vite…) is served directly by the Rust runtime.
 #[derive(Debug, Clone)]
 pub struct StaticRoute {
-    /// Préfixe d'URL ("/assets") ou "/" (devient la route fallback).
+    /// URL prefix ("/assets") or "/" (becomes the fallback route).
     pub path: String,
-    /// Dossier servi.
+    /// Directory served.
     pub dir: String,
-    /// Fichier renvoyé pour les chemins inconnus (SPA : index.html).
+    /// File returned for unknown paths (SPA: index.html).
     pub not_found: Option<String>,
-    /// Sert comme fallback (toute route non matchée par l'API).
+    /// Serves as fallback (any route not matched by the API).
     pub fallback: bool,
 }
 
-/// Résultat d'une tentative d'authentification.
+/// Result of an authentication attempt.
 pub enum AuthOutcome {
-    /// Token valide — les données d'auth (JSON) sont transmises au handler.
+    /// Valid token — the auth data (JSON) is passed to the handler.
     Authenticated(String),
-    /// Refusé — statut + corps d'erreur à renvoyer tels quels.
+    /// Denied — status + error body to return as-is.
     Denied { status: u16, body: Vec<u8> },
 }
 
-/// Handler d'authentification fourni par l'app (via le binding) : reçoit le
-/// token, décide. Appelé par le serveur AVANT le handler de l'endpoint.
+/// Authentication handler provided by the app (via the binding): receives the
+/// token, decides. Called by the server BEFORE the endpoint handler.
 pub trait AuthHandler: Send + Sync + 'static {
     fn authenticate(&self, token: &str) -> AuthOutcome;
 }
 
-/// Extrait le token d'une requête : `Authorization: Bearer …` (ou valeur brute),
-/// sinon `?token=` (clients sans en-têtes, ex. EventSource).
+/// Extracts the token from a request: `Authorization: Bearer …` (or raw value),
+/// otherwise `?token=` (clients without headers, e.g. EventSource).
 fn extract_token(headers: &HeaderMap, query: &Option<String>) -> Option<String> {
     if let Some(raw) = headers.get("authorization").and_then(|v| v.to_str().ok()) {
         let token = raw.strip_prefix("Bearer ").or(raw.strip_prefix("bearer ")).unwrap_or(raw);
@@ -119,7 +119,7 @@ fn extract_token(headers: &HeaderMap, query: &Option<String>) -> Option<String> 
         .filter(|t| !t.is_empty())
 }
 
-/// Joue l'authentification pour un endpoint protégé. `Ok(json)` = autorisé.
+/// Runs authentication for a protected endpoint. `Ok(json)` = authorized.
 pub(crate) async fn run_auth_pub(
     auth: &Option<Arc<dyn AuthHandler>>,
     headers: &HeaderMap,
@@ -135,13 +135,13 @@ async fn run_auth(
     let Some(handler) = auth else {
         return Err(Response {
             status: 500,
-            body: error_json("internal", "endpoint protégé sans auth handler", None),
+            body: error_json("internal", "protected endpoint without auth handler", None),
         });
     };
     let Some(token) = extract_token(headers, query) else {
         return Err(Response {
             status: 401,
-            body: error_json("unauthenticated", "authentification requise", None),
+            body: error_json("unauthenticated", "authentication required", None),
         });
     };
     let handler = handler.clone();
@@ -157,14 +157,14 @@ async fn run_auth(
     }
 }
 
-/// Résout l'identité d'une requête entrante sur une route publique.
+/// Resolves the identity of an incoming request on a public route.
 ///
-/// - **mesh backend** (`VIGNEMALE_SERVICE_NAME` posé → conteneur derrière une
-///   gateway) : la requête DOIT porter une signature svcauth valide (gateway ou
-///   service pair) ; on fait alors CONFIANCE à l'identité propagée
-///   (`x-vignemale-auth-data`) sans rejouer le auth handler. Un hit direct non
-///   signé est rejeté (401) → la gateway est l'entrée effective.
-/// - **edge** (mono / pas de mesh) : authentification au bord via `run_auth`.
+/// - **mesh backend** (`VIGNEMALE_SERVICE_NAME` set → container behind a
+///   gateway): the request MUST carry a valid svcauth signature (from the
+///   gateway or a peer service); we then TRUST the propagated identity
+///   (`x-vignemale-auth-data`) without replaying the auth handler. A direct
+///   unsigned hit is rejected (401) → the gateway is the effective entrypoint.
+/// - **edge** (mono / no mesh): authentication at the edge via `run_auth`.
 #[allow(clippy::too_many_arguments)]
 async fn resolve_inbound_auth(
     auth: &Option<Arc<dyn AuthHandler>>,
@@ -194,7 +194,7 @@ async fn resolve_inbound_auth(
             status: 401,
             body: error_json(
                 "unauthenticated",
-                "appel non signé sur un service en mode mesh (passez par la gateway)",
+                "unsigned call on a service in mesh mode (go through the gateway)",
                 None,
             ),
         });
@@ -203,7 +203,7 @@ async fn resolve_inbound_auth(
     if secrets.is_empty() {
         return Err(Response {
             status: 401,
-            body: error_json("unauthenticated", "VIGNEMALE_SERVICE_SECRET non configuré", None),
+            body: error_json("unauthenticated", "VIGNEMALE_SERVICE_SECRET not configured", None),
         });
     }
     let auth_header = h("x-vignemale-auth-data");
@@ -225,7 +225,7 @@ async fn resolve_inbound_auth(
     if requires_auth && auth_header.is_empty() {
         return Err(Response {
             status: 401,
-            body: error_json("unauthenticated", "endpoint protégé : identité non propagée", None),
+            body: error_json("unauthenticated", "protected endpoint: identity not propagated", None),
         });
     }
     Ok((!auth_header.is_empty()).then(|| auth_header.to_string()))
@@ -248,19 +248,19 @@ fn env_u64(name: &str, default: u64) -> u64 {
         .unwrap_or(default)
 }
 
-/// Délai max de traitement effectif d'un endpoint (None = désactivé).
+/// Effective max processing timeout for an endpoint (None = disabled).
 fn effective_timeout(ep_timeout_ms: Option<u64>) -> Option<std::time::Duration> {
     let ms = ep_timeout_ms.unwrap_or_else(|| env_u64("VIGNEMALE_REQUEST_TIMEOUT", 30) * 1000);
     (ms > 0).then(|| std::time::Duration::from_millis(ms))
 }
 
-/// Valide le body extrait ; un dépassement de `body_limit` → 413 structuré.
+/// Validates the extracted body; exceeding `body_limit` → structured 413.
 fn check_body(
     body: Result<Bytes, BytesRejection>,
 ) -> Result<Bytes, Response> {
     body.map_err(|_| Response {
         status: 413,
-        body: error_json("resource_exhausted", "corps de requête trop volumineux", None),
+        body: error_json("resource_exhausted", "request body too large", None),
     })
 }
 
@@ -277,8 +277,8 @@ fn method_filter(method: &str) -> Option<MethodFilter> {
     }
 }
 
-/// Contexte de trace W3C : reprend le `traceparent` entrant s'il est valide,
-/// sinon en crée un. Renvoie (trace_id, traceparent).
+/// W3C trace context: reuses the incoming `traceparent` if valid, otherwise
+/// creates one. Returns (trace_id, traceparent).
 pub(crate) fn trace_context_pub(headers: &HeaderMap) -> (String, String) { trace_context(headers) }
 fn trace_context(headers: &HeaderMap) -> (String, String) {
     if let Some(tp) = headers.get("traceparent").and_then(|v| v.to_str().ok()) {
@@ -310,7 +310,7 @@ fn make_request(
         })
         .filter(|(k, _)| k != "traceparent")
         .collect();
-    // toujours présent (repris ou généré) → l'app peut le propager via call()
+    // always present (reused or generated) → the app can propagate it via call()
     hdrs.push(("traceparent".to_string(), traceparent.to_string()));
     Request {
         params: params
@@ -327,8 +327,8 @@ fn make_request(
     }
 }
 
-/// Couche CORS : tout ouvert par défaut (dev) ; `VIGNEMALE_CORS_ALLOW_ORIGINS`
-/// (liste d'origines séparées par des virgules, ou `*`) restreint en prod.
+/// CORS layer: fully open by default (dev); `VIGNEMALE_CORS_ALLOW_ORIGINS`
+/// (comma-separated list of origins, or `*`) restricts it in prod.
 pub(crate) fn cors_layer_pub() -> tower_http::cors::CorsLayer { cors_layer() }
 fn cors_layer() -> tower_http::cors::CorsLayer {
     use tower_http::cors::{Any, CorsLayer};
@@ -370,14 +370,14 @@ fn log_request(
             target: "vignemale::api",
             endpoint, method, path, status, duration_ms = ms, request_id = id,
             trace_id,
-            "requête en erreur"
+            "request failed"
         );
     } else {
         tracing::info!(
             target: "vignemale::api",
             endpoint, method, path, status, duration_ms = ms, request_id = id,
             trace_id,
-            "requête traitée"
+            "request handled"
         );
     }
 }
@@ -389,14 +389,14 @@ pub fn build_router(
     statics: Vec<StaticRoute>,
 ) -> anyhow::Result<Router> {
     let default_body_limit = env_u64("VIGNEMALE_MAX_BODY", 10 * 1024 * 1024) as usize;
-    // Conteneur derrière une gateway : le deploy pose VIGNEMALE_REQUIRE_SVCAUTH=1
-    // (uniquement quand une gateway est déployée). Le trafic public arrive alors
-    // signé par la gateway → on exige la signature et on fait confiance à l'auth
-    // propagée. NB : distinct de VIGNEMALE_SERVICE_NAME (filtrage/découverte), car
-    // un service nommé peut rester joignable au bord sans gateway.
+    // Container behind a gateway: the deploy sets VIGNEMALE_REQUIRE_SVCAUTH=1
+    // (only when a gateway is deployed). Public traffic then arrives signed by
+    // the gateway → we require the signature and trust the propagated auth.
+    // NB: distinct from VIGNEMALE_SERVICE_NAME (filtering/discovery), because a
+    // named service can still be reachable at the edge without a gateway.
     let mesh_backend = std::env::var("VIGNEMALE_REQUIRE_SVCAUTH").is_ok_and(|v| v == "1");
 
-    // Index des endpoints unaires pour les appels service-à-service signés.
+    // Index of unary endpoints for signed service-to-service calls.
     let mut internal: std::collections::HashMap<String, (Arc<dyn Handler>, bool)> =
         std::collections::HashMap::new();
     for (ep, kind) in &endpoints {
@@ -407,13 +407,13 @@ pub fn build_router(
 
     let mut app = Router::new();
     for (ep, kind) in endpoints {
-        // PRIVATE (expose=false) : pas de route publique. L'endpoint reste dans
-        // la map `internal` ci-dessus → joignable seulement via `call()` signé.
+        // PRIVATE (expose=false): no public route. The endpoint stays in the
+        // `internal` map above → reachable only via a signed `call()`.
         if !ep.expose {
             continue;
         }
         let filter = method_filter(&ep.method)
-            .ok_or_else(|| anyhow::anyhow!("méthode HTTP non supportée: {}", ep.method))?;
+            .ok_or_else(|| anyhow::anyhow!("unsupported HTTP method: {}", ep.method))?;
         let (name, method, path) = (Arc::<str>::from(ep.name), ep.method, ep.path);
         let route_path = path.clone();
         let path: Arc<str> = Arc::from(path);
@@ -439,7 +439,7 @@ pub fn build_router(
                             let request_id = crate::observability::request_id();
                             let started = std::time::Instant::now();
                             let (trace_id, traceparent) = trace_context(&headers);
-                            // body d'abord (nécessaire pour vérifier la signature en mesh)
+                            // body first (needed to verify the signature in mesh mode)
                             let body = match check_body(body) {
                                 Ok(b) => b,
                                 Err(denied) => {
@@ -468,9 +468,9 @@ pub fn build_router(
                                 auth_data,
                                 &traceparent,
                             );
-                            // le handler bloquant part en arrière-plan ; au-delà
-                            // du délai on répond 504 (le handler finit, ses logs
-                            // sont conservés — façon CancellationGuard d'Encore)
+                            // the blocking handler runs in the background; past
+                            // the timeout we reply 504 (the handler still finishes,
+                            // its logs are kept — Encore's CancellationGuard style)
                             let work = tokio::task::spawn_blocking(move || handler.call(req));
                             let resp = match timeout {
                                 Some(d) => match tokio::time::timeout(d, work).await {
@@ -482,7 +482,7 @@ pub fn build_router(
                                         status: 504,
                                         body: error_json(
                                             "deadline_exceeded",
-                                            "délai de traitement dépassé",
+                                            "processing deadline exceeded",
                                             None,
                                         ),
                                     },
@@ -539,7 +539,7 @@ pub fn build_router(
                                     return deny_response(denied, &request_id);
                                 }
                             };
-                            // l'auth se joue AVANT d'ouvrir le flux → vrai 401
+                            // auth runs BEFORE opening the stream → a real 401
                             let auth_data = match resolve_inbound_auth(
                                 &auth, &headers, &query, requires_auth, mesh_backend,
                                 orig_uri.path(), &body,
@@ -562,8 +562,8 @@ pub fn build_router(
                             );
                             let (tx, rx) = tokio::sync::mpsc::channel::<String>(64);
                             let sink = StreamSink { tx };
-                            // Le handler (bloquant) pousse des fragments via `sink` ;
-                            // on logge à la fin du flux (durée = vie du handler).
+                            // The (blocking) handler pushes fragments via `sink`;
+                            // we log at the end of the stream (duration = handler lifetime).
                             let log_id = request_id.clone();
                             let log_trace = trace_id.clone();
                             tokio::task::spawn_blocking(move || {
@@ -592,10 +592,10 @@ pub fn build_router(
         };
     }
 
-    // Appels service-à-service : route interne signée (HMAC, secret partagé
-    // VIGNEMALE_SERVICE_SECRET). Le payload est {"params": {...}, "body": …} ;
-    // les données d'auth de l'appelant arrivent propagées dans
-    // `x-vignemale-auth-data`, le contexte de trace dans `traceparent`.
+    // Service-to-service calls: signed internal route (HMAC, shared secret
+    // VIGNEMALE_SERVICE_SECRET). The payload is {"params": {...}, "body": …};
+    // the caller's auth data arrives propagated in
+    // `x-vignemale-auth-data`, the trace context in `traceparent`.
     {
         let internal = Arc::new(internal);
         app = app.route(
@@ -617,7 +617,7 @@ pub fn build_router(
                                 .to_string()
                         };
                         let caller = hdr("x-vignemale-caller");
-                        // identité propagée — lue AVANT la vérif car incluse dans la signature.
+                        // propagated identity — read BEFORE verification since it is covered by the signature.
                         let auth_header = hdr("x-vignemale-auth-data");
                         let finish = |resp: Response| {
                             tracing::info!(
@@ -626,19 +626,19 @@ pub fn build_router(
                                 status = resp.status,
                                 duration_ms = started.elapsed().as_millis() as u64,
                                 request_id = %request_id, trace_id = %trace_id,
-                                "appel interne traité"
+                                "internal call handled"
                             );
                             deny_response(resp, &request_id)
                         };
 
-                        // 1) signature obligatoire (jeu de secrets : rotation sans coupure)
+                        // 1) mandatory signature (set of secrets: zero-downtime rotation)
                         let secrets = super::svcauth::accepted_secrets_from_env();
                         if secrets.is_empty() {
                             return finish(Response {
                                 status: 401,
                                 body: error_json(
                                     "unauthenticated",
-                                    "appels inter-services non configurés (VIGNEMALE_SERVICE_SECRET)",
+                                    "service-to-service calls not configured (VIGNEMALE_SERVICE_SECRET)",
                                     None,
                                 ),
                             });
@@ -659,12 +659,12 @@ pub fn build_router(
                             });
                         }
 
-                        // 2) endpoint cible
+                        // 2) target endpoint
                         let Some((handler, requires_auth)) = internal.get(&endpoint).cloned()
                         else {
                             return finish(Response {
                                 status: 404,
-                                body: error_json("not_found", "endpoint interne inconnu", None),
+                                body: error_json("not_found", "unknown internal endpoint", None),
                             });
                         };
 
@@ -673,7 +673,7 @@ pub fn build_router(
                         else {
                             return finish(Response {
                                 status: 400,
-                                body: error_json("invalid_argument", "payload invalide", None),
+                                body: error_json("invalid_argument", "invalid payload", None),
                             });
                         };
                         let params: Vec<(String, String)> = payload
@@ -693,16 +693,16 @@ pub fn build_router(
                             Some(v) => serde_json::to_vec(v).unwrap_or_default(),
                         };
 
-                        // 4) auth propagée (les appels internes sont de confiance :
-                        //    pas de re-passage par l'auth handler, façon Encore).
-                        //    `auth_header` a déjà été lu et couvert par la signature.
+                        // 4) propagated auth (internal calls are trusted:
+                        //    no second pass through the auth handler, Encore style).
+                        //    `auth_header` was already read and covered by the signature.
                         let auth_data = if requires_auth {
                             if auth_header.is_empty() {
                                 return finish(Response {
                                     status: 401,
                                     body: error_json(
                                         "unauthenticated",
-                                        "endpoint protégé : données d'auth non propagées",
+                                        "protected endpoint: auth data not propagated",
                                         None,
                                     ),
                                 });
@@ -736,15 +736,15 @@ pub fn build_router(
         );
     }
 
-    // Routes internes : health check (pour les load balancers / containers).
-    // Pendant l'arrêt gracieux → 503 shutting_down (l'orchestrateur sait).
+    // Internal routes: health check (for load balancers / containers).
+    // During graceful shutdown → 503 shutting_down (the orchestrator knows).
     app = app.route(
         "/__vignemale/healthz",
         get(move || async move {
             let (status, body) = if shutting_down.load(Ordering::SeqCst) {
                 (
                     StatusCode::SERVICE_UNAVAILABLE,
-                    error_json("shutting_down", "arrêt en cours", None),
+                    error_json("shutting_down", "shutting down", None),
                 )
             } else {
                 (StatusCode::OK, error_json("ok", "vignemale up", None))
@@ -757,12 +757,12 @@ pub fn build_router(
         }),
     );
 
-    // Fichiers statiques : servis par tower-http directement (zéro app code).
+    // Static files: served by tower-http directly (zero app code).
     let mut has_static_fallback = false;
     for s in &statics {
         use tower_http::services::{ServeDir, ServeFile};
-        // `.fallback(...)` (et pas `not_found_service`, qui force un 404) :
-        // une SPA doit renvoyer index.html en 200 pour le routing client.
+        // `.fallback(...)` (not `not_found_service`, which forces a 404):
+        // a SPA must return index.html with 200 for client-side routing.
         if s.fallback {
             has_static_fallback = true;
             match &s.not_found {
@@ -785,12 +785,12 @@ pub fn build_router(
         }
     }
 
-    // Route inconnue → 404 structuré (sauf si un front sert le fallback).
+    // Unknown route → structured 404 (unless a frontend serves the fallback).
     if !has_static_fallback {
         app = app.fallback(|| async {
             let mut r = AxumResponse::new(Body::from(error_json(
                 "not_found",
-                "endpoint inconnu",
+                "unknown endpoint",
                 None,
             )));
             *r.status_mut() = StatusCode::NOT_FOUND;
@@ -803,16 +803,16 @@ pub fn build_router(
     Ok(app.layer(cors_layer()))
 }
 
-/// Crée un listener TCP. Avec `reuse_port`, active SO_REUSEPORT pour que N
-/// process worker (mode multi-process) partagent le même port — le noyau
-/// répartit les connexions entre eux.
+/// Creates a TCP listener. With `reuse_port`, enables SO_REUSEPORT so that N
+/// worker processes (multi-process mode) share the same port — the kernel
+/// distributes connections among them.
 pub(crate) fn make_listener(addr: SocketAddr, reuse_port: bool) -> anyhow::Result<tokio::net::TcpListener> {
     use socket2::{Domain, Protocol, Socket, Type};
     let domain = if addr.is_ipv6() { Domain::IPV6 } else { Domain::IPV4 };
     let socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))?;
     socket.set_reuse_address(true)?;
-    // SO_REUSEPORT (partage du port entre process worker) n'existe que sous Unix.
-    // Sous Windows, le mode multi-process n'est pas supporté — on ignore le drapeau.
+    // SO_REUSEPORT (port sharing between worker processes) only exists on Unix.
+    // On Windows, multi-process mode is not supported — we ignore the flag.
     #[cfg(unix)]
     if reuse_port {
         socket.set_reuse_port(true)?;
@@ -840,14 +840,14 @@ pub async fn serve(
     let n_statics = statics.len();
     let app = build_router(endpoints, auth, shutting_down, statics)?;
     let listener = make_listener(addr, reuse_port)?;
-    tracing::info!(target: "vignemale::api", addr = %addr, endpoints = count, statics = n_statics, "serveur démarré");
-    // Arrêt gracieux : on cesse d'accepter, les requêtes en vol terminent.
+    tracing::info!(target: "vignemale::api", addr = %addr, endpoints = count, statics = n_statics, "server started");
+    // Graceful shutdown: we stop accepting, in-flight requests finish.
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {
             let _ = shutdown.changed().await;
-            tracing::info!(target: "vignemale::api", "arrêt demandé — drain des requêtes en vol");
+            tracing::info!(target: "vignemale::api", "shutdown requested — draining in-flight requests");
         })
         .await?;
-    tracing::info!(target: "vignemale::api", "serveur arrêté (drain terminé)");
+    tracing::info!(target: "vignemale::api", "server stopped (drain complete)");
     Ok(())
 }

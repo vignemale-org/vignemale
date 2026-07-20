@@ -1,13 +1,13 @@
-//! Framework API — serveur HTTP, routing, pont vers les handlers de l'app.
+//! API framework — HTTP server, routing, bridge to the app's handlers.
 //!
-//! Version **focalisée**, structure calquée sur `encore/runtimes/core/src/api`
-//! (`mod` / `endpoint` / `server` / `manager`), mais SANS le subsystem complet
-//! d'Encore (schema · jsonschema · cors · reqauth · gateway · auth · websocket…).
-//! On ajoutera ces sous-modules au fur et à mesure.
+//! **Focused** version, structure modeled on `encore/runtimes/core/src/api`
+//! (`mod` / `endpoint` / `server` / `manager`), but WITHOUT Encore's complete
+//! subsystem (schema · jsonschema · cors · reqauth · gateway · auth · websocket…).
+//! We will add these submodules progressively.
 //!
-//! Le core définit le serveur + le trait `Handler` ; le **binding** (PyO3)
-//! implémente `Handler` pour appeler le handler Python — comme `runtimes/js`
-//! le fait côté JS chez Encore.
+//! The core defines the server + the `Handler` trait; the **binding** (PyO3)
+//! implements `Handler` to call the Python handler — just as `runtimes/js`
+//! does on the JS side in Encore.
 
 mod endpoint;
 mod error;

@@ -1,13 +1,13 @@
-"""Exemple : Vignemale + un ORM TIERS (SQLAlchemy). Comme Encore, on ne force
-pas notre ORM — on fournit la base, la connexion, et les migrations ; l'ORM
-de ton choix fait le reste.
+"""Example: Vignemale + a THIRD-PARTY ORM (SQLAlchemy). Like Encore, we don't
+force our ORM — we provide the database, the connection, and the migrations;
+the ORM of your choice does the rest.
 
-- `SQLDatabase("blog", migrations="migrations")` : base auto-provisionnée en
-  local ; les .sql du dossier sont appliqués au démarrage (`vignemale run`).
-- `db.connection_string` : branche SQLAlchemy (ou SQLModel, Tortoise…) dessus.
+- `SQLDatabase("blog", migrations="migrations")`: database auto-provisioned
+  locally; the folder's .sql files are applied on startup (`vignemale run`).
+- `db.connection_string`: plug SQLAlchemy (or SQLModel, Tortoise…) onto it.
 
     vignemale run examples/blog/app.py
-    curl -X POST 127.0.0.1:8080/posts -d '{"title":"Hello","body":"premier post"}'
+    curl -X POST 127.0.0.1:8080/posts -d '{"title":"Hello","body":"first post"}'
     curl 127.0.0.1:8080/posts
 """
 
@@ -18,7 +18,7 @@ from vignemale import SQLDatabase, api, serve
 
 db = SQLDatabase("blog", migrations="migrations")
 
-# SQLAlchemy se connecte avec SON driver, via la connection string de Vignemale.
+# SQLAlchemy connects with ITS driver, via Vignemale's connection string.
 _engine = None
 
 

@@ -1,6 +1,6 @@
-async function saluer() {
-  const nom = document.getElementById("nom").value || "visiteur";
-  const r = await fetch(`/api/hello?name=${encodeURIComponent(nom)}`);
+async function greet() {
+  const name = document.getElementById("name").value || "visitor";
+  const r = await fetch(`/api/hello?name=${encodeURIComponent(name)}`);
   const data = await r.json();
-  document.getElementById("sortie").textContent = data.message;
+  document.getElementById("output").textContent = data.message;
 }

@@ -1,4 +1,4 @@
-"""Service `users` — comptes, groupes, et l'auth handler de l'app."""
+"""Service `users` — accounts, groups, and the app's auth handler."""
 
 from vignemale import Service
 
