@@ -1,6 +1,6 @@
 [package]
 name = "vignemale-python-runtime"
-version = "0.1.0"
+version = "0.1.4"
 edition = "2021"
 
 # PyO3 binding (mirror of Encore's runtimes/js, in NAPI). Produces the Python
