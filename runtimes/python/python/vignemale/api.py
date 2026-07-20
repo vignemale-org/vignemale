@@ -342,27 +342,17 @@ def _gateway_routes() -> list:
     return [(pref, svc, url, req) for (pref, svc, url), req in routes.items()]
 
 
-_BANNER = r"""
-      /\
-     /  \          V I G N E M A L E
-    /    \
-   /  /\  \        infrastructure from code
-  /  /  \  \       Python  ->  Scaleway
- /__/    \__\
-"""
-
-
 def print_banner() -> None:
-    """Print the startup banner (mountain wordmark) once, at server startup.
+    """Print the one-line startup banner once, at server startup.
 
     Called from the entry points (`vignemale run`, `python -m vignemale`) — NOT
     from `serve()`, so it is not repeated once per worker in multi-process mode.
     """
     try:
-        version = f"  v{_core.version()}"
+        version = f" v{_core.version()}"
     except Exception:
         version = ""
-    print(_BANNER + version, flush=True)
+    print(f"▲ vignemale{version}  ·  infrastructure from code", flush=True)
 
 
 def _port_in_use_error(addr: str) -> SystemExit:
